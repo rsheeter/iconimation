@@ -78,10 +78,8 @@ Array.prototype.random = function random() {
 
 (async function() {
   const SIZES = [16, 24, 36, 48, 96, 240];
-  const FILE_SUFFIX = '-none.json';
 
-  const lotties = await (await fetch('all.json')).json();
-  const icons = lotties.map(lottie => lottie.replace(FILE_SUFFIX, ''));
+  const icons = await (await fetch('all.json')).json();
 
   const settings = {
     'mode': 'sizes',
@@ -140,7 +138,7 @@ Array.prototype.random = function random() {
             <lottie-player
               seeker="30"
               style="width: ${size}px; height: ${size}px"
-              src="lottie/${state.icon + FILE_SUFFIX}"
+              src="lottie/${state.icon}"
               ${playerOptions}
             ></lottie-player>
             <span>${size}px</span>
