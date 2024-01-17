@@ -62,56 +62,61 @@ def plot_keyframes(keyframes, key, name, series_names):
 
 
 def main(argv):
-    for lottie_file in argv[1:]:
-        if not lottie_file.endswith(".json"):
-            print(f"{lottie_file} doesn't look like a Lottie?")
-            continue
-        with open(lottie_file) as f:
-            lottie = json.load(f)
+    with open("motion.html", "w") as f_out:
+        print("<!DOCTYPE html>", file=f_out)
+        print("<html>", file=f_out)
+        print("<body>", file=f_out)
 
-        placeholder = find(lottie, "nm", "placeholder")
-        if placeholder is None:
-            print(f"{lottie_file} has no placeholder :(")
-            continue
-        shapes = placeholder.get("it", [{}])
-        transform = shapes[-1]
-        if transform.get("ty", "?") != "tr":
-            print("The last item is not a transform!")
-            continue
+        for lottie_file in argv[1:]:
+            lottie_file = Path(lottie_file)
+            if not lottie_file.suffix == ".json":
+                print(f"{lottie_file} doesn't look like a Lottie?")
+                continue
+            with open(lottie_file) as f:
+                lottie = json.load(f)
 
-        # this is not every possible animated field of a transform, just the basics
-        # Ref https://lottiefiles.github.io/lottie-docs/concepts/#animated-property
-        svg_files = []
-        for (key, name, series_names) in (("p", "position", ("x", "y")), ("s", "scale", ("sx", "sy")), ("r", "rotation", ("",))):
-            maybe_animated = transform.get(key, None)
-            if maybe_animated is None:
-                print(f"No {name} at all?!")
+            placeholder = find(lottie, "nm", "placeholder")
+            if placeholder is None:
+                print(f"{lottie_file} has no placeholder :(")
                 continue
-            is_animated = maybe_animated.get("a", 0)
-            if not is_animated:
-                print(f"{name} is not animated")
-                continue
-            keyframes = maybe_animated.get("k", [])
-            if not keyframes:
-                print(f"{name} IS animated but has no keyframes. Very suspicious!")
+            shapes = placeholder.get("it", [{}])
+            transform = shapes[-1]
+            if transform.get("ty", "?") != "tr":
+                print("The last item is not a transform!")
                 continue
 
-            plot = plot_keyframes(keyframes, key, name, series_names)
-            svg_file = Path(lottie_file).stem + "." + name + ".svg"
-            plot.savefig(svg_file)
-            print(f"{name} is animated, {len(keyframes)} keyframes dumped to {svg_file}")
-            svg_files.append(svg_file)
+            print(f"<h3>{lottie_file.name}</h3>", file=f_out)
 
-        with open(Path(lottie_file).stem + ".motion.html", "w") as f:
-            print("<!DOCTYPE html>", file=f)
-            print("<html>", file=f)
-            print("<body>", file=f)
+            # this is not every possible animated field of a transform, just the basics
+            # Ref https://lottiefiles.github.io/lottie-docs/concepts/#animated-property
+            svg_files = []
+            for (key, name, series_names) in (("p", "position", ("x", "y")), ("s", "scale", ("sx", "sy")), ("r", "rotation", ("",))):
+                maybe_animated = transform.get(key, None)
+                if maybe_animated is None:
+                    print(f"No {name} at all?!")
+                    continue
+                is_animated = maybe_animated.get("a", 0)
+                if not is_animated:
+                    print(f"{name} is not animated")
+                    continue
+                keyframes = maybe_animated.get("k", [])
+                if not keyframes:
+                    print(f"{name} IS animated but has no keyframes. Very suspicious!")
+                    continue
+
+                plot = plot_keyframes(keyframes, key, name, series_names)
+                svg_file = lottie_file.stem + "." + name + ".svg"
+                plot.savefig(svg_file)
+                print(f"{name} is animated, {len(keyframes)} keyframes dumped to {svg_file}")
+                svg_files.append(svg_file)
+
             for svg_file in svg_files:
                 with open(svg_file) as svg_f:
                     svg = svg_f.read()
-                print(svg, file=f)
-            print("</body>", file=f)
-            print("</html>", file=f)
+                print(svg, file=f_out)
+
+        print("</body>", file=f_out)
+        print("</html>", file=f_out)
 
 
 if __name__ == "__main__":
