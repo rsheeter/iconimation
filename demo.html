@@ -32,13 +32,16 @@ body {
   font: 14px/1.3 "Google Sans", sans-serif;
   margin: var(--default-margin);
 }
-body[theme="dark"] {
+[theme="dark"] {
   background: var(--gm3-dark-surface);
   color: var(--gm3-dark-on-surface);
 }
-body[theme="light"] {
+[theme="light"] {
   background: var(--gm3-light-surface);
   color: var(--gm3-light-on-surface);
+}
+[mode="grid"] .icon {
+  display: none;
 }
 #container {
   align-items: center;
@@ -46,16 +49,13 @@ body[theme="light"] {
   gap: min(var(--default-margin), 2vw);
   justify-content: center;
 }
-#container[mode="single"] {
-  grid-template-columns: var(--default-lottie-size);
-}
 #container[mode="grid"] {
-  grid-template-columns: repeat(9, minmax(0, var(--default-lottie-size)));
+  grid-template-columns: repeat(var(--grid-columns-count), minmax(0, var(--default-lottie-size)));
 }
 #container[mode="sizes"] {
   align-items: baseline;
-  /* should match SIZES.length */
-  grid-template-columns: repeat(6, min-content);
+  grid-template-columns: repeat(var(--sizes-count), min-content);
+  grid-template-rows: repeat(var(--animations-count), min-content);
   text-align: center;
 }
 #container[mode="sizes"] .size {
@@ -64,6 +64,27 @@ body[theme="light"] {
   flex-direction: column;
   gap: var(--default-margin);
   justify-content: baseline;
+}
+#container[mode="single"] {
+  grid-template-columns: repeat(2, min-content);
+}
+#container[mode="single"] .player {
+  height: var(--default-lottie-size);
+  width: var(--default-lottie-size);
+}
+.player {
+  align-items: stretch;
+  display: none;
+  flex-direction: column;
+  gap: var(--default-margin);
+  justify-content: center;
+}
+.animation-name {
+  align-self: center;
+  display: none;
+}
+[animation="all"] .animation-name { 
+  display: block;
 }
 </style>
 </head>
@@ -75,19 +96,45 @@ body[theme="light"] {
 Array.prototype.random = function random() {
   return this[Math.floor(Math.random() * this.length)];
 };
+Array.prototype.unique = function unique() {
+  return Array.from(new Set(this));
+};
 
 (async function() {
   const SIZES = [16, 24, 36, 48, 96, 240];
+  const ANIMATIONS = ['ScalePosition', 'ScaleRotate', 'ScaleRotatePosition'];
+  const GRID_ICONS_PER_ROW = 3;
 
-  const icons = await (await fetch('all.json')).json();
+  const styles = document.createElement('style');
+  styles.textContent = `
+    :root {
+      --animations-count: ${ANIMATIONS.length};
+      --sizes-count: ${SIZES.length + /*= .animation-name */1};
+      --grid-columns-count: ${ANIMATIONS.length * GRID_ICONS_PER_ROW};
+    }
+
+    ${ANIMATIONS.map(animation => `
+      [animation="${animation}"] .player.${animation} {
+        display: flex;
+      }
+    `).join('\n')}
+
+    [animation="all"] .player.player {
+      display: flex;
+    }
+  `;
+  document.head.appendChild(styles);
+
+  const lotties = await (await fetch('all.json')).json();
+  const icons = lotties.map(lottie => lottie.split('-none')[0]).unique();
 
   const settings = {
     'mode': 'sizes',
     'animation': 'all',
     'icon': icons.random(),
     'theme': window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light',
-    'stagger': true,
-    'loop': false,
+    'loop': true,
+    'stagger': false,
   };
 
   const gui = new dat.GUI();
@@ -96,77 +143,99 @@ Array.prototype.random = function random() {
 
   const values = {
     'mode': ['grid', 'sizes', 'single'],
-    'animation': ['all', 'ScalePosition', 'ScaleRotate', 'ScaleRotatePosition'],
+    'animation': ['all', ...ANIMATIONS],
     'icon': icons,
     'theme': ['light', 'dark'],
   };
 
   for (const option of Object.keys(settings)) {
-    gui.add(settings, option, values[option]).onChange(() => render());
+    gui
+      .add(settings, option, values[option])
+      .onChange(() => render(option))
+      .domElement.closest('.cr').classList.add(option);
   }
 
-  // TODO: implement the 3 animations. Temporarily disable GUI animations dropdown until then
-  document.querySelector('[value="ScaleRotate"]').parentElement.disabled = true;
+  // TODO: Implement stagger
+  document.querySelector('.stagger input').disabled = true;
 
-  function render() {
-    const state = gui.getSaveObject().remembered.Default[0] ?? settings;
+  function getPlayer(state, size) {
+    if (state.animation === 'all') {
+      return ANIMATIONS
+        .map(animation => getPlayer({...state, animation}, size))
+        .join('');
+    }
 
     const playerOptions = [
       state.mode === 'single' ? 'controls="true"' : '',
-      state.loop ? 'autoplay' : 'hover',
-      'loop',
+      state.loop ? 'autoplay loop' : 'hover',
       'disableShadowDOM="true"',
+      size ? `style="width: ${size}px; height: ${size}px"` : '',
     ].join(' ');
 
+    return `
+      <div class="player ${state.animation}">
+        <lottie-player
+          src="lottie/${state.icon}-none-${state.animation}.json"
+          ${playerOptions}
+        ></lottie-player>
+        ${size ? `<span class="size">${size}px</span>` : ''}
+      </div>
+    `;
+  }
+
+  async function render(changedKey) {
+    const state = gui.getSaveObject().remembered.Default[0] ?? settings;
+
     document.body.setAttribute('theme', state.theme);
+    document.body.setAttribute('animation', state.animation);
+
+    // Toggling between dark/light theme should not re-render all lotties. Just the fg/bg color
+    // Changing animation also toggles visibility of some already rendered lotties.
+    if (changedKey === 'theme' || changedKey === 'animation') {
+      return;
+    }
+
+    if (state.loop) {
+      state.stagger = false;
+    }
+
+    document.body.setAttribute('mode', `${state.mode}`)
+    document.body.setAttribute('loop', `${state.loop}`)
     container.setAttribute('mode', state.mode);
 
     switch (state.mode) {
       case 'grid':
-        // TODO: add the 3 different animations based if `state.animation == all`
-        // or the specific animation otherwise.
-        container.innerHTML = lotties.map(filename => `
-          <lottie-player
-            src="lottie/${filename}"
-            ${playerOptions}
-          ></lottie-player>
-        `).join('');
+        container.innerHTML = icons.map(icon => getPlayer({...state, icon})).join('');
         break;
       case 'sizes':
-        container.innerHTML = SIZES.map(size => `
-          <div class="size">
-            <lottie-player
-              seeker="30"
-              style="width: ${size}px; height: ${size}px"
-              src="lottie/${state.icon}"
-              ${playerOptions}
-            ></lottie-player>
-            <span>${size}px</span>
-          </div>
-        `).join('');
+        container.innerHTML = ANIMATIONS.map(animation =>
+          SIZES.map(size =>
+            getPlayer({...state, animation}, size)
+          ).join('') + `<div class="animation-name">${animation}</div>`
+        ).join('');
         break;
       case 'single':
-        container.innerHTML = `
-          <lottie-player
-            src="lottie/${state.icon + FILE_SUFFIX}"
-            ${playerOptions}
-          ></lottie-player>
-        `;
+        container.innerHTML = ANIMATIONS.map(animation =>
+          getPlayer({...state, animation})
+          + `<div class="animation-name">${animation}</div>`
+        ).join('');
         break;
       default:
         throw new Error(`Unknown mode: ${state.mode}`);
     }
 
+    const players = Array.from(document.querySelectorAll('lottie-player'));
+
     // Workaround for choosing a better frame (let's render the one in the middle)
-    if (!state.loop && state.animation === 'all') {
+    if (!state.loop && state.animation === 'all' && !state.stagger) {
       const events = ['stop', 'ready'];
-      document.querySelectorAll('lottie-player').forEach(async (lottie) => {
+      for (const lottie of players) {
         for (const event of events) {
           lottie.addEventListener(event, () => {
             lottie.seek(Math.floor(lottie.getLottie().totalFrames / 2));
           });
         }
-      });
+      }
     }
   }
 
