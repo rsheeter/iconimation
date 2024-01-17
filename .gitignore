@@ -24,3 +24,7 @@ demo/
 
 # Generated files
 output.json
+
+# venv
+venv/
+.venv/

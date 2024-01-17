@@ -42,9 +42,9 @@ fn draw_annotated(svg: &mut String, y_offset: f64, mut paths: Vec<BezPath>) {
 
     for path in &paths {
         let path_svg = path.to_svg();
-        if y_offset == 0.0 {
-            eprintln!("{}", &path_svg[0..path_svg.find(' ').unwrap()]);
-        }
+        // if y_offset == 0.0 {
+        //     eprintln!("{}", &path_svg[0..path_svg.find(' ').unwrap()]);
+        // }
 
         let contained = a_contained_point(path);
         let mut filled = 0;
@@ -53,21 +53,21 @@ fn draw_annotated(svg: &mut String, y_offset: f64, mut paths: Vec<BezPath>) {
             for path in &paths {
                 let wind = path.winding(contained);
                 filled += wind;
-                if y_offset == 0.0 {
-                    let path = path.to_svg();
-                    eprintln!(
-                        "  {} contributes {}",
-                        &path[0..path.find(' ').unwrap()],
-                        wind
-                    );
-                }
+                // if y_offset == 0.0 {
+                //     let path = path.to_svg();
+                //     eprintln!(
+                //         "  {} contributes {}",
+                //         &path[0..path.find(' ').unwrap()],
+                //         wind
+                //     );
+                // }
             }
         }
         let filled = filled != 0; // nonzero winding?!
 
-        if y_offset == 0.0 {
-            eprintln!("  filled? {filled}");
-        }
+        // if y_offset == 0.0 {
+        //     eprintln!("  filled? {filled}");
+        // }
 
         svg.push_str("  <path opacity=\"33%\" d=\"");
         svg.push_str(&path_svg);
