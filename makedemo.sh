@@ -10,11 +10,12 @@ function generate() {
     # strip comments
     sed 's/#.*//g' "$sample_file" \
     | grep -v "^\S*$" \
-    | awk "{ print \"--codepoint 0x\"\$2\" --animation $animation --template resources/templates/"$template" --out-file demo/\"\$1\"-$animation-$template\" } " \
+    | awk "{ print \"--codepoint 0x\"\$2\" --animation $animation --template resources/templates/"$template" --out-file demo/lottie/\"\$1\"-$animation-$template\" } " \
     | xargs -L1 target/release/iconimation-cli --font "$font" --debug
 }
 
-rm -f demo/*
+rm -f demo/all.json
+mkdir -p demo/lottie
 
 font='../material-design-icons/variablefont/MaterialSymbolsOutlined[FILL,GRAD,opsz,wght].ttf'
 sample_file=samples2.txt
@@ -28,5 +29,6 @@ generate samples.txt none ScaleRotate.json "$font"
 generate samples.txt none ScaleRotatePosition.json "$font"
 
 python3 makedemo.py
+cp demo.html demo/
 
 echo "Try demo/demo.html"
