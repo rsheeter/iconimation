@@ -27,7 +27,7 @@ Don't count on anything working correctly.
     $ cargo run -- --codepoint 0xeba8 --font '../material-design-icons/variablefont/MaterialSymbolsOutlined[FILL,GRAD,opsz,wght].ttf' --animation twirl-parts
 
     # I have my own template!
-    $ cargo run -- --codepoint 0xeba8 --font '../material-design-icons/variablefont/MaterialSymbolsOutlined[FILL,GRAD,opsz,wght].ttf' --animation template --template iconimation/resources/templates/00_SP_Lottie.json
+    $ cargo run -- --codepoint 0xeba8 --font '../material-design-icons/variablefont/MaterialSymbolsOutlined[FILL,GRAD,opsz,wght].ttf' --animation none --template resources/templates/ScaleRotate.json
     ```
 
 1. Try it out

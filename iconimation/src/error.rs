@@ -7,4 +7,6 @@ pub enum Error {
     DrawError(skrifa::outline::DrawError),
     #[error("No shapes updated")]
     NoShapesUpdated,
+    #[error("No keyframes updated")]
+    NoTransformsUpdated,
 }

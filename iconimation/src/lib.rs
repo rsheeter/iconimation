@@ -5,14 +5,17 @@ pub mod debug_pen;
 pub mod error;
 mod shape_pen;
 
+use std::f64::consts::PI;
+
 use bodymovin::{
-    layers::{AnyLayer, ShapeMixin},
-    properties::{Property, Value},
+    layers::{AnyLayer, Layer, ShapeMixin},
+    properties::{MultiDimensionalKeyframe, Property, Value},
     shapes::{AnyShape, Group, SubPath},
     sources::Asset,
     Bodymovin as Lottie,
 };
 use kurbo::{Affine, BezPath, Rect};
+use ordered_float::OrderedFloat;
 use skrifa::{instance::Size, OutlineGlyph};
 use write_fonts::pens::TransformPen;
 
@@ -69,6 +72,18 @@ pub trait Template {
     ) -> Result<(), Error>;
 }
 
+fn placeholders(layer: &mut Layer<ShapeMixin>) -> Vec<&mut Group> {
+    layer
+        .mixin
+        .shapes
+        .iter_mut()
+        .filter_map(|any| match any {
+            AnyShape::Group(group) if group.name.as_deref() == Some("placeholder") => Some(group),
+            _ => None,
+        })
+        .collect()
+}
+
 fn replace_placeholders(
     layers: &mut [AnyLayer],
     font_drawbox: &Rect,
@@ -80,17 +95,8 @@ fn replace_placeholders(
         let AnyLayer::Shape(layer) = layer else {
             continue;
         };
-        let placeholders: Vec<_> = layer
-            .mixin
-            .shapes
-            .iter_mut()
-            .filter_map(|any| match any {
-                AnyShape::Group(group) if group.name.as_deref() == Some("placeholder") => {
-                    Some(group)
-                }
-                _ => None,
-            })
-            .collect();
+        let (start, end) = (layer.in_point, layer.out_point);
+        let placeholders = placeholders(layer);
 
         let mut insert_at = Vec::with_capacity(1);
         for placeholder in placeholders {
@@ -137,8 +143,7 @@ fn replace_placeholders(
                     )
                 });
                 eprintln!("Animating {} glyph shapes", glyph_shapes.len());
-                let animated_shapes =
-                    animator.animate(layer.in_point, layer.out_point, glyph_shapes)?;
+                let animated_shapes = animator.animate(start, end, glyph_shapes)?;
                 placeholder.items.splice(*i..(*i + 1), animated_shapes);
             }
             shapes_updated += insert_at.len();
@@ -241,6 +246,182 @@ fn subpaths_for_glyph(
         .map_err(Error::DrawError)?;
 
     Ok(subpath_pen.into_shapes())
+}
+
+/// Spring params, Compose style
+pub struct AndroidSpring {
+    mass: f64,
+    stiffness: f64,
+    damping: f64,
+    initial_velocity: f64,
+}
+
+impl Default for AndroidSpring {
+    fn default() -> Self {
+        Self {
+            mass: 1.0,
+            stiffness: 100.0,
+            damping: 10.0,
+            initial_velocity: 0.0,
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct Spring {
+    initial_velocity: f64,
+    w0: f64,
+    zeta: f64,
+}
+
+impl Spring {
+    fn progress(&self, progress: f64) -> f64 {
+        let a = 1.0;
+        // If damping is too low do things differently
+        if self.zeta < 1.0 {
+            let wd = self.w0 * (1.0 - self.zeta * self.zeta);
+            let b = (self.zeta * self.w0 - self.initial_velocity) / wd;
+            1.0 - (-progress * self.zeta * self.w0)
+                * (a * (wd * progress).cos() + b * (wd * progress).sin()).exp()
+        } else {
+            let b = -self.initial_velocity + self.w0;
+            1.0 - (a + b * progress) * (-progress * self.w0).exp()
+        }
+    }
+}
+
+impl Default for Spring {
+    fn default() -> Self {
+        AndroidSpring::default().into()
+    }
+}
+
+impl From<AndroidSpring> for Spring {
+    fn from(value: AndroidSpring) -> Self {
+        let mass = 1.0;
+        let mult = 2.0 * PI / (value.stiffness / value.mass).sqrt();
+        let damping = 4.0 * PI * value.damping * mass / mult;
+        Spring {
+            initial_velocity: value.initial_velocity,
+            w0: (value.stiffness / mass).sqrt(),
+            zeta: damping / (2.0 * (value.stiffness * mass).sqrt()),
+        }
+    }
+}
+
+/// Move between keyframes using a spring. Boing.
+pub trait SpringBetween {
+    /// Populate the motion between keyframes using a spring function    
+    fn spring(&mut self, spring: Spring) -> Result<(), Error>;
+}
+
+impl SpringBetween for Vec<MultiDimensionalKeyframe> {
+    fn spring(&mut self, spring: Spring) -> Result<(), Error> {
+        // Sort so windows yield consecutive keyframes in time
+        self.sort_by_key(|k| OrderedFloat(k.start_time));
+        let mut new_frames = Vec::new();
+        for i in 0..self.len() - 1 {
+            let [k0, k1] = &self[i..i + 2] else {
+                panic!("Illegal state");
+            };
+            let Some(start_values) = &k0.start_value else {
+                continue;
+            };
+            let Some(end_values) = &k1.start_value else {
+                continue;
+            };
+
+            let start = k0.start_time.ceil() as usize;
+            let end = k1.start_time.floor() as usize;
+            if start + 1 >= end {
+                eprintln!("Nop interpolate {} to {}", k0.start_time, k1.start_time);
+                continue;
+            }
+
+            eprintln!("Generate frames {} to {}", start + 1, end - 1);
+            for i in start + 1..end {
+                let progress = (i - start) as f64 / (end - start) as f64;
+                let sprung = spring.progress(progress);
+                let mut new_frame = (*k0).clone();
+                new_frame.start_time = i as f64;
+                new_frame.start_value = Some(
+                    start_values
+                        .iter()
+                        .zip(end_values)
+                        .map(|(start, end)| (*end - *start) * sprung + start)
+                        .collect(),
+                );
+                new_frames.push(new_frame);
+                //eprintln!("  {i} {progress:.2} {sprung:.2}");
+            }
+        }
+        if new_frames.is_empty() {
+            return Err(Error::NoTransformsUpdated);
+        }
+
+        eprintln!(
+            "Had {} frames, now {}",
+            self.len(),
+            self.len() + new_frames.len()
+        );
+        self.extend(new_frames);
+        self.sort_by_key(|k| OrderedFloat(k.start_time));
+
+        Ok(())
+    }
+}
+
+/// Position and scale look like this
+impl SpringBetween for Property<Vec<f64>, MultiDimensionalKeyframe> {
+    fn spring(&mut self, spring: Spring) -> Result<(), Error> {
+        let Value::Animated(keyframes) = &mut self.value else {
+            return Err(Error::NoTransformsUpdated);
+        };
+        keyframes.spring(spring)
+    }
+}
+
+/// Rotation looks like this
+impl SpringBetween for Property<f64, MultiDimensionalKeyframe> {
+    fn spring(&mut self, spring: Spring) -> Result<(), Error> {
+        let Value::Animated(keyframes) = &mut self.value else {
+            return Err(Error::NoTransformsUpdated);
+        };
+        keyframes.spring(spring)
+    }
+}
+
+impl SpringBetween for Lottie {
+    fn spring(&mut self, spring: Spring) -> Result<(), Error> {
+        let mut transforms_updated = 0;
+        for layer in self.layers.iter_mut() {
+            let AnyLayer::Shape(layer) = layer else {
+                continue;
+            };
+            let placeholders = placeholders(layer);
+            for placeholder in placeholders {
+                let Some(AnyShape::Transform(transform)) = placeholder.items.last_mut() else {
+                    eprintln!("A placeholder without a transform last?!");
+                    continue;
+                };
+                for result in [
+                    transform.scale.spring(spring),
+                    transform.position.spring(spring),
+                    transform.rotation.spring(spring),
+                ] {
+                    match result {
+                        Ok(()) => transforms_updated += 1,
+                        Err(Error::NoTransformsUpdated) => (),
+                        Err(..) => return result,
+                    }
+                }
+            }
+        }
+        if transforms_updated == 0 {
+            return Err(Error::NoTransformsUpdated);
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]

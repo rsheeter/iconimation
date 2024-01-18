@@ -6,6 +6,7 @@ use clap::ValueEnum;
 use iconimation::animate::Animation;
 use iconimation::debug_pen::DebugPen;
 use iconimation::default_template;
+use iconimation::SpringBetween;
 use iconimation::Template;
 use kurbo::Point;
 use kurbo::Rect;
@@ -40,6 +41,10 @@ struct Args {
     /// Whether to emit additional debug info
     #[arg(long)]
     debug: bool,
+
+    /// Whether to generate spring-based animation between keyframes
+    #[arg(long)]
+    spring: bool,
 
     #[clap(value_enum, required(true))]
     #[arg(long)]
@@ -104,6 +109,12 @@ fn main() {
     lottie
         .replace_shape(&font_drawbox, &glyph, animation.animator().as_ref())
         .expect("Failed to replace shape");
+
+    if args.spring {
+        lottie
+            .spring(Default::default())
+            .expect("Failed to apply spring-based animation");
+    }
 
     fs::write(
         &args.out_file,
