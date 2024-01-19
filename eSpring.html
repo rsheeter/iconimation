@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<title>Animated Icons Demo</title>
+<style>
+    body {
+        background-color: lightgray;
+    }
+</style>
+</head>
+<body>
+<canvas id="out" width="640" height="480"></canvas>
+</body>
+<script>
+    // Importing object bases (CompBase, LayerBase, PropertyBase)
+    // Creating a new composition object from CompBase
+    function spring(options) {
+        // Setting the default options
+        let { 
+            mass = 1,
+            stiffness = 100,
+            damping = 10,
+            initialVelocity = 0,
+            // property = thisProperty,
+            __fast = false,
+            type = 'android',
+            time = 0,
+            frame = 0,
+            keys,
+            ...invalidProps 
+        } = options || {};
+        // If incorrect properties are passed in as options,
+        // we let the user know
+        const invalidPropNames = Object.getOwnPropertyNames(invalidProps);
+        if (invalidPropNames.length !== 0) {
+            throw Error(springError(`Invalid option:${list(invalidPropNames)}`));
+        }
+        /**
+         * Early returns if no animation is needed
+         */
+        if (keys) {
+        }
+        else {
+            throw new Error("keys required");
+        }
+        /**
+         * Translate Android values to iOS spring values
+         * that the spring function understands
+         */
+        if (type === 'android') {
+            const androidSpring = androidToAppleSpring({ damping, stiffness });
+            mass = androidSpring.mass;
+            stiffness = androidSpring.stiffness;
+            damping = androidSpring.damping;
+        }
+        // The relevant keyframes according to the current time
+        const currentKeyIndex = getMostRecentKeyIndex(time);
+        const { startKey, endKey } = getKeys(currentKeyIndex);
+        // Calculate the animation
+        const springedProgress = getSpringedProgress(time - endKey.time, {
+            damping,
+            stiffness,
+            mass,
+            initialVelocity: endKey.initialVelocity ?? 0,
+        });
+        function getPrevAnimationEndValue() {
+            // Keyframes used in the previous animation
+            if (currentKeyIndex == 0) {
+                return endKey.value;
+            }
+            const { startKey: prevStartKey, endKey: prevEndKey } = getKeys(currentKeyIndex - 1);
+            // Calculate the result of the previous animation
+            // so we can use it as our new starting point
+            const prevProgress = getSpringedProgress(endKey.time - startKey.time, {
+                damping,
+                stiffness,
+                mass,
+                initialVelocity,
+            });
+            let result = calculateAnimatedValue(prevStartKey.value, prevEndKey.value, prevProgress, "prev_end");
+            // if (frame > 128 && frame < 135) {
+            //     console.log("  prev start", startKey, "prevEnd", endKey, "result", result);
+            // }
+            console.log(`frame ${frame} getPrev currentKeyIndex ${currentKeyIndex} pk0_time ${startKey.time.toFixed(2)} pk1_time ${endKey.time.toFixed(2)} result ${result}`);
+            return result;
+        }
+        const currentAnimation = calculateAnimatedValue(getPrevAnimationEndValue(), endKey.value, springedProgress, "current");
+        // if (frame > 128 && frame < 135) {
+        //     console.log("Frame", frame, "key idx", currentKeyIndex, "spring progress", time - endKey.time, "springed progress", springedProgress, "from", startKey.t, "to", endKey.t);
+        // }
+        return currentAnimation;
+        function calculateAnimatedValue(fromValue, toValue, progress, context) {
+            if (fromValue.length != toValue.length) {
+                throw new Error("from must have the same number of entries as to");
+            }
+            var result = [...fromValue];
+            for (let i = 0; i < fromValue.length; i++) {
+                const delta = toValue[i] - fromValue[i];
+                const animatedDelta = delta * progress;
+                result[i] = fromValue[i] + animatedDelta;
+            }
+            // console.log("calculateAnimatedValue::" + context, "from", fromValue, "to", toValue, progress, result);
+            return result;
+        }
+        // Spring resolver
+        function getSpringedProgress(progress, spring) {
+            const { damping, stiffness, mass, initialVelocity } = spring;
+            const w0 = Math.sqrt(stiffness / mass);
+            const zeta = damping / (2 * Math.sqrt(stiffness * mass));
+            const a = 1;
+            // If the damping is too low, we want to calculate the animation differently
+            const isUnderDamped = zeta < 1;
+            const wd = isUnderDamped ? w0 * Math.sqrt(1 - zeta * zeta) : 0;
+            const b = isUnderDamped
+                ? (zeta * w0 + -initialVelocity) / wd
+                : -initialVelocity + w0;
+            if (isUnderDamped) {
+                result = (1 -
+                    Math.exp(-progress * zeta * w0) *
+                        (a * Math.cos(wd * progress) + b * Math.sin(wd * progress)));
+            }
+            else {
+                result = 1 - (a + b * progress) * Math.exp(-progress * w0);
+            }
+            // console.log("  ", progress, spring, "w0", w0, "zeta", zeta, "wd", wd, "b", b, "result", result);
+            return result;
+        }
+        function getMostRecentKeyIndex(time) {
+            if (keys) {
+                if (time <= keys[0].time)
+                    return 0;
+                if (time >= keys[keys.length - 1].time) {
+                    return keys.length - 1;
+                }
+                return keys.findIndex((key) => key.time > time) - 1;
+            }
+            throw new Error("keys required");
+        }
+        function getKeys(currentKeyIndex) {
+            return {
+                startKey: currentKeyIndex > 0 ? keys[currentKeyIndex - 1] : keys[currentKeyIndex],
+                endKey: keys[currentKeyIndex],
+            };
+        }
+        function springError(...errors) {
+            return `in function spring().\n\n${errors.join('\n')}`;
+        }
+        function list(list) {
+            return list.map((item) => `\n- ${item}`);
+        }
+        function androidToAppleSpring({ damping, stiffness, }) {
+            const mass = 1;
+            const mult = (2 * Math.PI) / Math.sqrt(stiffness / mass);
+            const iosDamping = (4 * Math.PI * damping * mass) / mult;
+            return { mass, stiffness, damping: iosDamping };
+        }
+    };
+
+function mark_point(ctx, x, y, r) {
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, 2 * Math.PI, 0);
+    ctx.fill();
+}
+
+(async function() {
+    const canvas = document.getElementById("out");
+    const ctx = canvas.getContext("2d");
+
+
+    const lottie = await (await fetch('resources/templates/SparseKeyframes.json')).json();
+    const frame_rate = lottie.fr;
+    const placeholder = lottie.layers[0].shapes[0];
+    console.assert(placeholder.nm === "placeholder");
+    const transform = placeholder.it[placeholder.it.length - 1];
+    console.assert(transform.ty === "tr");
+    console.log(transform);
+
+
+    ctx.fillStyle = "rgb(0 0 0)";
+    const tstart = lottie.ip / frame_rate;
+    const tend = lottie.op / frame_rate;
+    ctx.beginPath();
+    ctx.moveTo(tstart * 100, 400);
+    ctx.lineTo(tstart * 100, 100);
+    ctx.moveTo(tend * 100, 400);
+    ctx.lineTo(tend * 100, 100);
+    ctx.fillText("in point", tstart * 100 + 5, 100);
+    ctx.fillText("out point", tend * 100 + 5, 100);
+    ctx.stroke(); // Render the path
+
+    let keys = transform.s.k;
+    // keys.splice(0, 0, { "t": lottie.ip, "s": [...keys[0].s]});  // copy the first entry and mark it for the first frame
+
+    for (key of keys) {
+        key.time = key.t / frame_rate;
+        key.value = key.s;
+        ctx.fillStyle = "rgb(200 0 0)";
+        mark_point(ctx, key.time * 100, 400 - 2 * key.value[0], 4);
+    }
+
+    console.log(keys);
+
+    ctx.fillStyle = "rgb(50 0 100)";
+    for (let frame = lottie.ip; frame <= lottie.op + 50; frame++) {
+            const time = frame / frame_rate;
+            const springed = spring({ "keys": keys, "time": time, "stiffness": 380, "damping": 0.8, "frame": frame });
+            // console.log("frame", frame, "time", time, "spring", springed);
+            mark_point(ctx, time * 100, 400 - 2 * springed[0], 2);
+    }
+})();
+
+</script>
+</html>
