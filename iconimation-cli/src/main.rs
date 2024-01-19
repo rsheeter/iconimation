@@ -6,7 +6,8 @@ use clap::ValueEnum;
 use iconimation::animate::Animation;
 use iconimation::debug_pen::DebugPen;
 use iconimation::default_template;
-use iconimation::SpringBetween;
+use iconimation::AndroidSpring;
+use iconimation::Spring;
 use iconimation::Template;
 use kurbo::Point;
 use kurbo::Rect;
@@ -110,9 +111,16 @@ fn main() {
         .replace_shape(&font_drawbox, &glyph, animation.animator().as_ref())
         .expect("Failed to replace shape");
 
+    let spring: Spring = AndroidSpring {
+        damping: 0.8,
+        stiffness: 380.0,
+        ..Default::default()
+    }
+    .into();
+
     if args.spring {
         lottie
-            .spring(Default::default())
+            .spring(spring)
             .expect("Failed to apply spring-based animation");
     }
 
