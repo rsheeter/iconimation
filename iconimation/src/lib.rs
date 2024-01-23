@@ -415,6 +415,7 @@ impl SpringBetween for Vec<MultiDimensionalKeyframe> {
         let mut new_frames = Vec::new();
 
         for frame in timing.in_point.ceil() as usize..=(timing.out_point.floor() as usize + 50) {
+            // +50 : TEMPORARY DUE TO TESTDATA
             let time = timing.frame_to_time(frame as f64);
             let keyframe_idx = timing.keyframe_before(time, self).unwrap_or(0);
 
@@ -429,13 +430,15 @@ impl SpringBetween for Vec<MultiDimensionalKeyframe> {
             let prev_end_value = if keyframe_idx > 0 {
                 let pk0 = &self[keyframe_idx.saturating_sub(2)];
                 let pk1 = &self[keyframe_idx.saturating_sub(1)];
-                let pk0_time = timing.frame_to_time(pk0.start_time);
-                let pk1_time = timing.frame_to_time(pk1.start_time);
-                animated_value(
+                let progress = spring.progress(
+                    timing.frame_to_time(k1.start_time) - timing.frame_to_time(k0.start_time),
+                );
+                let prev_value = animated_value(
                     pk0.start_value.as_ref().unwrap(),
                     pk1.start_value.as_ref().unwrap(),
-                    spring.progress(pk1_time - pk0_time),
-                )
+                    progress,
+                );
+                prev_value
             } else {
                 end_values.to_vec()
             };

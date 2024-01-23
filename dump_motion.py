@@ -34,7 +34,7 @@ def find(json, attr, value):
 
 def plot_keyframes(keyframes, key, name, series_names):
     # https://matplotlib.org/stable/plot_types/basic/scatter_plot.html
-    plt.style.use('_mpl-gallery')
+    #plt.style.use('_mpl-gallery')
     keyframes.sort(key=lambda k: k["t"])  # time in frames
 
     # borrowed from https://matplotlib.org/stable/api/_as_gen/matplotlib.axes.Axes.scatter.html#matplotlib.axes.Axes.scatter
