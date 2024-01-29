@@ -32,11 +32,21 @@ def find(json, attr, value):
             print("wut", type(curr))
     return None
 
+def value_series(keyframes, key, name, series_names):
+    series = [[] for _ in series_names]
+    for keyframe in keyframes:
+        time = keyframe["t"]
+        values = keyframe["s"]
+        if len(values) != len(series):
+            raise ValueError(f"{series_names} wrong length for {values}")
+        for (i, value) in enumerate(values):
+            series[i].append((time, value))
+    return series
+
 def plot_keyframes(keyframes, key, name, series_names):
     # https://matplotlib.org/stable/plot_types/basic/scatter_plot.html
     #plt.style.use('_mpl-gallery')
-    keyframes.sort(key=lambda k: k["t"])  # time in frames
-
+    
     # borrowed from https://matplotlib.org/stable/api/_as_gen/matplotlib.axes.Axes.scatter.html#matplotlib.axes.Axes.scatter
     series_colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
 
@@ -104,10 +114,26 @@ def main(argv):
                     print(f"{name} IS animated but has no keyframes. Very suspicious!")
                     continue
 
+                if len({k["t"] for k in keyframes}) != len(keyframes):
+                    print(f"{lottie_file} {name} does not have unique frame numbers")
+
+                keyframes.sort(key=lambda k: k["t"])  # time in frames
+
                 plot = plot_keyframes(keyframes, key, name, series_names)
                 svg_file = lottie_file.stem + "." + name + ".svg"
                 plot.savefig(svg_file)
-                print(f"{name} is animated, {len(keyframes)} keyframes dumped to {svg_file}")
+
+                csv_files = []
+                for (i, series) in enumerate(value_series(keyframes, key, name, series_names)):
+                    series_name = series_names[i]
+                    print(f"{lottie_file} {name} {series_name} has {len(series)} values")
+                    csv_file = lottie_file.stem + "." + name + "." + series_name + ".csv"
+                    with open(csv_file, "w") as f:
+                        for (k, v) in series:
+                            f.write(f"{k}, {v}\n")
+                    csv_files.append(csv_file)
+
+                print(f"{name} is animated, {len(keyframes)} keyframes dumped to {svg_file}, {csv_files}")
                 svg_files.append(svg_file)
 
             for svg_file in svg_files:
