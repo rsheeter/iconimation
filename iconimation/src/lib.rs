@@ -387,6 +387,15 @@ impl From<AndroidSpring> for Spring {
 
 /// Move between keyframes using a spring. Boing.
 trait SpringBetween {
+    type Item;
+
+    fn springed_value(
+        &self,
+        time: f64,
+        timing: Timing,
+        spring: Spring,
+    ) -> Result<Self::Item, Error>;
+
     /// Populate the motion between keyframes using a spring function    
     fn spring(&mut self, timing: Timing, spring: Spring) -> Result<(), Error>;
 }
@@ -408,52 +417,101 @@ fn animated_value(from: &[f64], to: &[f64], progress: f64) -> Vec<f64> {
         .collect()
 }
 
+const KEYFRAME_VALUE_EPSILON: f64 = 0.01;
+
 impl SpringBetween for Vec<MultiDimensionalKeyframe> {
+    type Item = MultiDimensionalKeyframe;
+
+    fn springed_value(
+        &self,
+        frame: f64,
+        timing: Timing,
+        spring: Spring,
+    ) -> Result<Self::Item, Error> {
+        let time = timing.frame_to_time(frame);
+        let keyframe_idx = timing.keyframe_before(time, self).unwrap_or(0);
+
+        // getKeys in js
+        let k0 = &self[keyframe_idx.saturating_sub(1)];
+        let k1 = &self[keyframe_idx];
+
+        let springed_progress = spring.progress(time - timing.frame_to_time(k1.start_time));
+        let end_values = k1.start_value.as_ref().unwrap();
+
+        // we want to start from where we last finished; getPrevAnimationEndValue in js
+        let prev_end_value = if keyframe_idx > 0 {
+            let pk0 = &self[keyframe_idx.saturating_sub(2)];
+            let pk1 = &self[keyframe_idx.saturating_sub(1)];
+            let progress = spring.progress(
+                timing.frame_to_time(k1.start_time) - timing.frame_to_time(k0.start_time),
+            );
+            let prev_value = animated_value(
+                pk0.start_value.as_ref().unwrap(),
+                pk1.start_value.as_ref().unwrap(),
+                progress,
+            );
+            prev_value
+        } else {
+            end_values.to_vec()
+        };
+
+        let mut new_frame = (*k0).clone();
+        new_frame.start_time = frame as f64;
+        new_frame.start_value = Some(animated_value(
+            &prev_end_value,
+            end_values,
+            springed_progress,
+        ));
+
+        Ok(new_frame)
+    }
+
     fn spring(&mut self, timing: Timing, spring: Spring) -> Result<(), Error> {
         // Sort so windows yield consecutive keyframes in time
         self.sort_by_key(|k| OrderedFloat(k.start_time));
         let mut new_frames = Vec::new();
 
+        // +50 : TEMPORARY DUE TO TESTDATA
         for frame in timing.in_point.ceil() as usize..=(timing.out_point.floor() as usize + 50) {
-            // +50 : TEMPORARY DUE TO TESTDATA
-            let time = timing.frame_to_time(frame as f64);
-            let keyframe_idx = timing.keyframe_before(time, self).unwrap_or(0);
-
-            // getKeys in js
-            let k0 = &self[keyframe_idx.saturating_sub(1)];
-            let k1 = &self[keyframe_idx];
-
-            let springed_progress = spring.progress(time - timing.frame_to_time(k1.start_time));
-            let end_values = k1.start_value.as_ref().unwrap();
-
-            // we want to start from where we last finished; getPrevAnimationEndValue in js
-            let prev_end_value = if keyframe_idx > 0 {
-                let pk0 = &self[keyframe_idx.saturating_sub(2)];
-                let pk1 = &self[keyframe_idx.saturating_sub(1)];
-                let progress = spring.progress(
-                    timing.frame_to_time(k1.start_time) - timing.frame_to_time(k0.start_time),
-                );
-                let prev_value = animated_value(
-                    pk0.start_value.as_ref().unwrap(),
-                    pk1.start_value.as_ref().unwrap(),
-                    progress,
-                );
-                prev_value
-            } else {
-                end_values.to_vec()
-            };
-
-            let mut new_frame = (*k0).clone();
-            new_frame.start_time = frame as f64;
-            new_frame.start_value = Some(animated_value(
-                &prev_end_value,
-                end_values,
-                springed_progress,
-            ));
-            new_frames.push(new_frame);
+            let new_frame = self.springed_value(frame as f64, timing, spring);
+            new_frames.push(new_frame?);
         }
         if new_frames.is_empty() {
             return Err(Error::NoTransformsUpdated);
+        }
+
+        // Our Springs tend to generate series of almost identical frames; blast those
+        if new_frames.len() > 2 {
+            let mut i = 0;
+            let mut drops = Vec::new();
+            while i < new_frames.len() - 2 {
+                let Some(i_value) = &new_frames[i].start_value.as_ref() else {
+                    continue;
+                };
+                let mut run_len: usize = 0;
+                for j in i + 1..new_frames.len() {
+                    let Some(j_value) = &new_frames[j].start_value.as_ref() else {
+                        break;
+                    };
+                    if i_value
+                        .iter()
+                        .zip(j_value.iter())
+                        .any(|(a, b)| (a - b).abs() >= KEYFRAME_VALUE_EPSILON)
+                    {
+                        break;
+                    }
+                    run_len += 1;
+                }
+                if run_len > 2 {
+                    drops.extend(i + 1..i + run_len);
+                }
+
+                i += run_len + 1;
+            }
+            eprintln!("Drop {} unnecessary (duplicate) frames", drops.len());
+            for i in drops.into_iter().rev() {
+                new_frames.remove(i);
+            }
         }
 
         // completely replace the original frames
@@ -466,6 +524,20 @@ impl SpringBetween for Vec<MultiDimensionalKeyframe> {
 
 /// Position and scale look like this
 impl SpringBetween for Property<Vec<f64>, MultiDimensionalKeyframe> {
+    type Item = MultiDimensionalKeyframe;
+
+    fn springed_value(
+        &self,
+        time: f64,
+        timing: Timing,
+        spring: Spring,
+    ) -> Result<Self::Item, Error> {
+        let Value::Animated(keyframes) = &self.value else {
+            return Err(Error::NoTransformsUpdated);
+        };
+        keyframes.springed_value(time, timing, spring)
+    }
+
     fn spring(&mut self, timing: Timing, spring: Spring) -> Result<(), Error> {
         let Value::Animated(keyframes) = &mut self.value else {
             return Err(Error::NoTransformsUpdated);
@@ -476,6 +548,20 @@ impl SpringBetween for Property<Vec<f64>, MultiDimensionalKeyframe> {
 
 /// Rotation looks like this
 impl SpringBetween for Property<f64, MultiDimensionalKeyframe> {
+    type Item = MultiDimensionalKeyframe;
+
+    fn springed_value(
+        &self,
+        time: f64,
+        timing: Timing,
+        spring: Spring,
+    ) -> Result<Self::Item, Error> {
+        let Value::Animated(keyframes) = &self.value else {
+            return Err(Error::NoTransformsUpdated);
+        };
+        keyframes.springed_value(time, timing, spring)
+    }
+
     fn spring(&mut self, timing: Timing, spring: Spring) -> Result<(), Error> {
         let Value::Animated(keyframes) = &mut self.value else {
             return Err(Error::NoTransformsUpdated);
