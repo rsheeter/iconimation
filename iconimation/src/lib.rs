@@ -4,6 +4,7 @@ pub mod animate;
 pub mod debug_pen;
 pub mod error;
 mod shape_pen;
+pub mod spring;
 
 use std::f64::consts::PI;
 
@@ -489,8 +490,8 @@ impl SpringBetween for Vec<MultiDimensionalKeyframe> {
                     continue;
                 };
                 let mut run_len: usize = 0;
-                for later_frame in new_frames.iter().skip(i + 1) {
-                    let Some(j_value) = later_frame.start_value.as_ref() else {
+                for j_frame in new_frames.iter().skip(i + 1) {
+                    let Some(j_value) = j_frame.start_value.as_ref() else {
                         break;
                     };
                     if i_value
