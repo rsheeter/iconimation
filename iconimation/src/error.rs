@@ -10,3 +10,9 @@ pub enum Error {
     #[error("No keyframes updated")]
     NoTransformsUpdated,
 }
+
+#[derive(Debug, Error)]
+pub enum SpringBuildError {
+    #[error("Damping must be >= 0")]
+    InvalidDamping,
+}
