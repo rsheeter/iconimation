@@ -16,3 +16,11 @@ pub enum SpringBuildError {
     #[error("Damping must be >= 0")]
     InvalidDamping,
 }
+
+#[derive(Debug, Error)]
+pub enum SpringFitError {
+    #[error("Did not reach equilibrium by {0:.3}")]
+    NoEquilibrium(f64),
+    #[error("We hit equilibrium immediately; no curve to smooth")]
+    ImmediateEquilibrium,
+}

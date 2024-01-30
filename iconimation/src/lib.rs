@@ -5,6 +5,7 @@ pub mod debug_pen;
 pub mod error;
 mod shape_pen;
 pub mod spring;
+pub mod spring_fit;
 
 use std::f64::consts::PI;
 

@@ -65,7 +65,11 @@ impl Spring {
         Self::new_internal(1.0, 380.0)
     }
 
-    /// Compute for a new time, such as a new frame
+    /// Compute for a new time, such as a new frame.
+    ///
+    /// Does not appear to give the right value unless walked frame by frame. For example,
+    /// passing in the animated value at time 0 and asking what the value is at some arbitrary
+    /// value doesn't give you the desired curve whereas walking frame by frame does.
     ///
     /// See:
     /// * [DynamicAnimation::doAnimationFrame](https://cs.android.com/android/platform/superproject/main/+/main:frameworks/base/core/java/com/android/internal/dynamicanimation/animation/DynamicAnimation.java;l=663-693;drc=b7d26a383dbb3c7fa3f276d8ad1afdac5bb5443f)
@@ -133,11 +137,11 @@ impl Spring {
 /// <https://cs.android.com/android/platform/superproject/main/+/main:frameworks/base/core/java/com/android/internal/dynamicanimation/animation/SpringForce.java;l=261-307;drc=b7d26a383dbb3c7fa3f276d8ad1afdac5bb5443f>
 #[derive(Debug, Copy, Clone)]
 pub struct AnimatedValue {
-    value: f64,
-    value_type: AnimatedValueType,
-    velocity: f64,
-    final_value: f64,
-    time: f64,
+    pub(crate) value: f64,
+    pub(crate) value_type: AnimatedValueType,
+    pub(crate) velocity: f64,
+    pub(crate) final_value: f64,
+    pub(crate) time: f64,
 }
 
 impl AnimatedValue {
