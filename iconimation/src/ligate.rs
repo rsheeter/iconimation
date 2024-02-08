@@ -23,7 +23,6 @@ fn resolve_ligature(
     let Some(set_index) = coverage.get(*first) else {
         return Ok(None);
     };
-    eprintln!("Found a set for {first}!");
     let set = liga
         .ligature_sets()
         .get(set_index as usize)
@@ -51,11 +50,7 @@ pub fn icon_name_to_gid(font: &FontRef, name: &str) -> Result<GlyphId, IconNameE
     let charmap = Charmap::new(font);
     let gids = name
         .chars()
-        .map(|c| {
-            charmap
-                .map(c)
-                .ok_or_else(|| IconNameError::UnmappedCharError(c))
-        })
+        .map(|c| charmap.map(c).ok_or(IconNameError::UnmappedCharError(c)))
         .collect::<Result<Vec<_>, _>>()?;
 
     // Step 1: try to find a ligature that starts with our first gid

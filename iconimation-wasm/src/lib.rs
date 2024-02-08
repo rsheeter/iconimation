@@ -39,7 +39,7 @@ fn get_f64(name: &str, captures: &Captures<'_>, i: usize) -> Result<f64, String>
 }
 
 impl Command<'_> {
-    fn parse<'a>(animation: &'a str) -> Result<Command<'a>, String> {
+    fn parse(animation: &str) -> Result<Command, String> {
         static ROTATE: OnceLock<Regex> = OnceLock::new();
         static SCALE: OnceLock<Regex> = OnceLock::new();
         static ONLY_NAME: OnceLock<Regex> = OnceLock::new();
@@ -56,20 +56,20 @@ impl Command<'_> {
             Regex::new(r"^Animate\s+(\w+)\s*:\s*(pulse|pulse-whole|twirl|twirl-whole)$").unwrap()
         });
 
-        Ok(if let Some(captures) = rotate.captures_at(&animation, 0) {
+        Ok(if let Some(captures) = rotate.captures_at(animation, 0) {
             let icon_name = captures
                 .get(1)
                 .ok_or_else(|| "Unable to parse icon name".to_string())?;
             let degrees = get_f64("degrees", &captures, 2)?;
             Command::RotateDegrees(icon_name.as_str(), degrees)
-        } else if let Some(captures) = scale.captures_at(&animation, 0) {
+        } else if let Some(captures) = scale.captures_at(animation, 0) {
             let icon_name = captures
                 .get(1)
                 .ok_or_else(|| "Unable to parse icon name".to_string())?;
             let from = get_f64("from", &captures, 2)?;
             let to = get_f64("to", &captures, 3)?;
             Command::ScaleFromTo(icon_name.as_str(), from, to)
-        } else if let Some(captures) = only_name.captures_at(&animation, 0) {
+        } else if let Some(captures) = only_name.captures_at(animation, 0) {
             let icon_name = captures
                 .get(1)
                 .ok_or_else(|| "Unable to parse icon name".to_string())?;
@@ -114,7 +114,7 @@ impl Command<'_> {
 pub fn generate_lottie(raw_font: &ArrayBuffer, animation: String) -> Result<String, String> {
     let command = Command::parse(&animation)?;
 
-    let rust_buf = Uint8Array::new(&raw_font).to_vec();
+    let rust_buf = Uint8Array::new(raw_font).to_vec();
     let font = FontRef::new(&rust_buf).map_err(|e| format!("FontRef::new failed: {e}"))?;
     let upem = font.head().unwrap().units_per_em() as f64;
     let font_drawbox: Rect = (Point::ZERO, Point::new(upem, upem)).into();
