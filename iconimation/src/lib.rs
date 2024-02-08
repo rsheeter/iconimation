@@ -3,14 +3,16 @@
 pub mod animate;
 pub mod debug_pen;
 pub mod error;
+pub mod ligate;
 mod shape_pen;
 pub mod spring;
 
 use std::f64::consts::PI;
 
 use bodymovin::{
+    helpers::Transform,
     layers::{AnyLayer, Layer, ShapeMixin},
-    properties::{MultiDimensionalKeyframe, Property, Value},
+    properties::{MultiDimensionalKeyframe, Property, SplittableMultiDimensional, Value},
     shapes::{AnyShape, Group, SubPath},
     sources::Asset,
     Bodymovin as Lottie,
@@ -32,6 +34,16 @@ pub fn default_template(font_drawbox: &Rect) -> Lottie {
         layers: vec![AnyLayer::Shape(bodymovin::layers::Shape {
             in_point: 0.0,
             out_point: 60.0, // 60fps total animation = 1s
+            transform: Transform {
+                position: SplittableMultiDimensional::Uniform(Property {
+                    value: Value::Fixed(vec![
+                        font_drawbox.width() / 2.0,
+                        font_drawbox.height() / 2.0,
+                    ]),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
             mixin: ShapeMixin {
                 shapes: vec![AnyShape::Group(Group {
                     name: Some("placeholder".into()),

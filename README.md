@@ -39,6 +39,19 @@ Don't count on anything working correctly.
 
 To produce a demo with several samples run `makedemo.sh`.
 
+## Wasm demo
+
+```shell
+# Once
+$ cargo install wasm-pack
+
+# Each time
+$ wasm-pack build iconimation-wasm --target web
+$ (cd iconimation-wasm && python -m http.server 8010)
+# load http://localhost:8010/demo.html
+```
+
+
 ## Templates
 
 A template should:

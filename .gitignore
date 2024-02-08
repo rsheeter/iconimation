@@ -28,3 +28,7 @@ output.json
 # venv
 venv/
 .venv/
+
+push_x20.sh
+
+.vscode/
