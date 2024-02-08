@@ -6,6 +6,7 @@ use clap::ValueEnum;
 use iconimation::animate::Animation;
 use iconimation::debug_pen::DebugPen;
 use iconimation::default_template;
+use iconimation::ligate::icon_name_to_gid;
 use iconimation::AndroidSpring;
 use iconimation::Spring;
 use iconimation::Template;
@@ -52,7 +53,7 @@ struct Args {
     animation: CliAnimation,
 
     #[arg(long)]
-    codepoint: String,
+    icon: String,
 
     #[arg(long)]
     template: Option<String>,
@@ -69,26 +70,27 @@ struct Args {
 fn main() {
     let args = Args::parse();
 
-    assert!(
-        args.codepoint.starts_with("0x"),
-        "Codepoint must start with 0x"
-    );
-    let codepoint = u32::from_str_radix(&args.codepoint[2..], 16).unwrap();
-
     let font_file = Path::new(args.font.as_str());
     let font_bytes = fs::read(font_file).unwrap();
     let font = FontRef::new(&font_bytes).unwrap();
     let upem = font.head().unwrap().units_per_em() as f64;
     let font_drawbox: Rect = (Point::ZERO, Point::new(upem, upem)).into();
+    eprintln!("font_drawbox {font_drawbox:?}");
     let outline_loader = font.outline_glyphs();
 
-    let gid = font
-        .charmap()
-        .map(codepoint)
-        .unwrap_or_else(|| panic!("No gid for 0x{codepoint:04x}"));
+    let gid = if args.icon.starts_with("0x") {
+        let codepoint = u32::from_str_radix(&args.icon[2..], 16).unwrap();
+        font.charmap()
+            .map(codepoint)
+            .unwrap_or_else(|| panic!("No gid for 0x{codepoint:04x}"))
+    } else {
+        icon_name_to_gid(&font, &args.icon)
+            .unwrap_or_else(|e| panic!("Unable to resolve '{}' to a glyph id: {e}", args.icon))
+    };
+
     let glyph = outline_loader
         .get(gid)
-        .unwrap_or_else(|| panic!("No outline for 0x{codepoint:04x} (gid {gid})"));
+        .unwrap_or_else(|| panic!("No outline for {} (gid {gid})", args.icon));
 
     if args.debug {
         let mut pen = DebugPen::new(Rect::new(0.0, 0.0, upem, upem));

@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en-US">
+  <head>
+    <meta charset="utf-8" />
+    <title>Iconimation wasm example</title>
+    <style>
+    .hint {
+        font-family: monospace;
+    }
+    #command {
+        font-size: 16pt;
+        width: 98%;
+    }
+    #result {
+        font-size: 16pt;
+    }
+    </style>
+  </head>
+  <body>
+    <script src="https://unpkg.com/@lottiefiles/lottie-player@latest/dist/lottie-player.js"></script>
+    <script src="https://unpkg.com/dat.gui@0.7.9/build/dat.gui.min.js"></script>
+    <script type="module">
+
+
+    </script>
+    <h1>Iconimation wasm demo</h1>
+    <div class="hint">
+        Downloads font, generates Lottie on demand using wasm.<br/>
+        <br/>
+        You could try:<br/>
+        <ul>
+            <li>Animate settings: pulse</li>
+            <li>Animate settings: pulse-whole</li>
+            <li>Animate settings: twirl</li>
+            <li>Animate settings: twirl-whole</li>
+            <li>(TODO) Animate settings: rotate 360 degrees using expressive-spatial</li>
+            <li>(TODO) Animate check_circle: scale 0 to 100 using expressive-spatial</li>
+        </ul>
+    </div>
+    <div>
+        <input id="command" size="156" placeholder="Enter an animation definition and press Enter">
+    </div>
+    <div>
+        <span id="result">&nbsp;</span>
+    </div>
+
+    <lottie-player id="player" mode="normal" style="width: 320px">
+    </lottie-player>
+
+    <script type="module">
+        import {generate_and_play_animation} from './animate.js';
+
+        let cmd = document.getElementById("command");
+        let result = document.getElementById("result");
+        let player = document.getElementById("player")
+        
+        cmd.addEventListener("keydown", function(event) {
+          if (event.keyCode != 13) return;
+          result.innerText = "Generating... ";
+          let command = cmd.value;
+          var lottie;
+          try {
+            lottie = generate_and_play_animation(command);
+          } catch (e) {
+            let message = `ERROR ${e}`;            
+            console.log(message);
+            result.innerText += message;
+            return;
+          }
+          result.innerText += "success!";
+          console.log(lottie);
+          player.load(lottie);
+          player.play();
+        });
+    </script>
+  </body>
+</html>
