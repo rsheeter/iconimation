@@ -132,7 +132,7 @@ pub fn generate_lottie(raw_font: &ArrayBuffer, animation: String) -> Result<Stri
         .replace_shape(&font_drawbox, &glyph, command.animator().as_ref())
         .expect("Failed to replace shape");
 
-    Ok(serde_json::to_string(&lottie).unwrap())
+    Ok(serde_json::to_string_pretty(&lottie).unwrap())
 }
 
 #[cfg(test)]

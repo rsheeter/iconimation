@@ -29,10 +29,11 @@
         <br/>
         You could try:<br/>
         <ul>
-            <li>Animate settings: pulse</li>
+            <li>Animate pause_circle: twirl</li>
+            <li>Animate more_horiz: pulse</li>
             <li>Animate settings: pulse-whole</li>
             <li>Animate settings: twirl</li>
-            <li>Animate settings: twirl-whole</li>
+            <li>Animate bolt: twirl-whole</li>
             <li>(TODO) Animate settings: rotate 360 degrees using expressive-spatial</li>
             <li>(TODO) Animate check_circle: scale 0 to 100 using expressive-spatial</li>
         </ul>
@@ -44,34 +45,47 @@
         <span id="result">&nbsp;</span>
     </div>
 
-    <lottie-player id="player" mode="normal" style="width: 320px">
+    <lottie-player id="player" mode="normal" style="width: 30vw;">
     </lottie-player>
 
-    <script type="module">
-        import {generate_and_play_animation} from './animate.js';
+    <button id="copy">Copy lottie</button>
+    <label for="copy">You could paste it into
+      <a href="https://lottiefiles.github.io/lottie-docs/playground/json_editor/">https://lottiefiles.github.io/lottie-docs/playground/json_editor/</a>
+    </label>
+    <pre id="lottie_content"></pre>
 
-        let cmd = document.getElementById("command");
-        let result = document.getElementById("result");
-        let player = document.getElementById("player")
-        
-        cmd.addEventListener("keydown", function(event) {
-          if (event.keyCode != 13) return;
-          result.innerText = "Generating... ";
-          let command = cmd.value;
-          var lottie;
-          try {
-            lottie = generate_and_play_animation(command);
-          } catch (e) {
-            let message = `ERROR ${e}`;            
-            console.log(message);
-            result.innerText += message;
-            return;
+    <script>
+        document.addEventListener("DOMContentLoaded", async (event) => {
+          const animate = await import ('./animate.js');
+
+          await animate.initialize();
+
+          let cmd = document.getElementById("command");
+          let copy = document.getElementById("copy");
+
+          cmd.addEventListener("keydown", function(event) {
+            if (event.keyCode != 13) return;
+            animate.generate_and_play_animation(cmd.value);
+          });
+
+          copy.addEventListener("click", function() {
+            navigator.clipboard.writeText(lottie_content.innerText).then(
+              () => {
+                result.innerText = "Copied!";
+              },
+              () => {
+                result.innerText = "Copy failed :(";
+              },
+            );
+          });
+
+          const query_cmd = new URLSearchParams(window.location.search).get('cmd');
+          console.log(`Loaded, query cmd ${query_cmd}`);
+          if (query_cmd != null) {
+            cmd.value = query_cmd.trim();
+            animate.generate_and_play_animation(query_cmd);
           }
-          result.innerText += "success!";
-          console.log(lottie);
-          player.load(lottie);
-          player.play();
-        });
+        });  
     </script>
   </body>
 </html>
