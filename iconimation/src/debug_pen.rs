@@ -1,12 +1,13 @@
 //! An [OutlinePen] that generates an svg displaying subpaths.
 
+use bodymovin::shapes::AnyShape;
 use kurbo::{Affine, BezPath, PathEl, Point, Rect, Shape};
 use ordered_float::OrderedFloat;
 use skrifa::outline::OutlinePen;
 use write_fonts::pens::write_to_pen;
 
 use crate::{
-    animate::{a_contained_point, group_icon_parts},
+    animate::{a_contained_point, group_icon_parts, LottieGeometry},
     shape_pen::SubPathPen,
 };
 
@@ -167,7 +168,9 @@ impl DebugPen {
             .flat_map(|bez| {
                 let mut pen = SubPathPen::default();
                 write_to_pen(bez, &mut pen);
-                pen.into_shapes().into_iter()
+                pen.into_shapes()
+                    .into_iter()
+                    .map(|(_, s)| AnyShape::Shape(s))
             })
             .collect();
         let groups = group_icon_parts(shapes);
@@ -198,7 +201,7 @@ impl DebugPen {
         for (i, group) in groups.iter().enumerate() {
             // group i draws into glyph block i+1
             let y_offset = self.glyph_block.min_y() + (i as f64 + 1.0) * self.glyph_block.height();
-            let paths: Vec<_> = group.iter().map(|(bez, _)| bez.clone()).collect();
+            let paths: Vec<_> = group.iter().map(|shape| shape.to_bez().unwrap()).collect();
             draw_annotated(&mut svg, y_offset, paths);
         }
 

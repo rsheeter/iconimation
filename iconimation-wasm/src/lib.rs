@@ -3,19 +3,13 @@
 use std::sync::OnceLock;
 
 use iconimation::{
-    animate::{Animation, Animator},
-    default_template,
-    ligate::icon_name_to_gid,
-    Template,
+    animate::Animation, default_template, ligate::icon_name_to_gid, GlyphShape, Template, ToLottie,
 };
 use kurbo::{Point, Rect};
 use regex::{Captures, Regex};
 
 use js_sys::{ArrayBuffer, Uint8Array};
-use skrifa::{
-    raw::{FontRef, TableProvider},
-    MetadataProvider,
-};
+use skrifa::raw::{FontRef, TableProvider};
 
 use wasm_bindgen::prelude::*;
 
@@ -99,13 +93,13 @@ impl Command<'_> {
         }
     }
 
-    fn animator(&self) -> Box<dyn Animator> {
+    fn animator<'a>(&self, to_lottie: &'a dyn ToLottie) -> Animation<'a> {
         match self {
-            Command::PulseParts(..) => Animation::PulseParts.animator(),
-            Command::PulseWhole(..) => Animation::PulseWhole.animator(),
-            Command::TwirlParts(..) => Animation::TwirlParts.animator(),
-            Command::TwirlWhole(..) => Animation::TwirlWhole.animator(),
-            _ => Animation::None.animator(),
+            Command::PulseParts(..) => Animation::PulseParts(to_lottie),
+            Command::PulseWhole(..) => Animation::PulseWhole(to_lottie),
+            Command::TwirlParts(..) => Animation::TwirlParts(to_lottie),
+            Command::TwirlWhole(..) => Animation::TwirlWhole(to_lottie),
+            _ => Animation::None(to_lottie),
         }
     }
 }
@@ -118,19 +112,19 @@ pub fn generate_lottie(raw_font: &ArrayBuffer, animation: String) -> Result<Stri
     let font = FontRef::new(&rust_buf).map_err(|e| format!("FontRef::new failed: {e}"))?;
     let upem = font.head().unwrap().units_per_em() as f64;
     let font_drawbox: Rect = (Point::ZERO, Point::new(upem, upem)).into();
-    let outline_loader = font.outline_glyphs();
 
     let gid = icon_name_to_gid(&font, command.icon_name())
         .map_err(|e| format!("Unable to determine icon gid {e}"))?;
-    let glyph = outline_loader
-        .get(gid)
-        .ok_or_else(|| format!("No outline for {gid}"))?;
 
     let mut lottie = default_template(&font_drawbox);
 
+    let glyph_shape = GlyphShape::new(&font, gid)
+        .map_err(|e| format!("Unable to create GlyphShape for {gid}: {e}"))?;
+
+    let animation = command.animator(&glyph_shape);
     lottie
-        .replace_shape(&font_drawbox, &glyph, command.animator().as_ref())
-        .expect("Failed to replace shape");
+        .replace_shape(&animation)
+        .map_err(|e| format!("Unable to animate {gid}: {e}"))?;
 
     Ok(serde_json::to_string_pretty(&lottie).unwrap())
 }

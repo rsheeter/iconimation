@@ -8,12 +8,11 @@ use iconimation::debug_pen::DebugPen;
 use iconimation::default_template;
 use iconimation::ligate::icon_name_to_gid;
 use iconimation::AndroidSpring;
+use iconimation::GlyphShape;
 use iconimation::Spring;
 use iconimation::Template;
-use kurbo::Point;
-use kurbo::Rect;
+use iconimation::ToLottie;
 use skrifa::raw::FontRef;
-use skrifa::raw::TableProvider;
 use skrifa::MetadataProvider;
 
 /// Clap-friendly version of [Animation]
@@ -24,16 +23,18 @@ pub enum CliAnimation {
     PulseParts,
     TwirlWhole,
     TwirlParts,
+    Fill,
 }
 
 impl CliAnimation {
-    fn to_lib(&self) -> Animation {
+    fn to_lib<'a>(&self, to_lottie: &'a dyn ToLottie) -> Animation<'a> {
         match self {
-            CliAnimation::None => Animation::None,
-            CliAnimation::PulseWhole => Animation::PulseWhole,
-            CliAnimation::PulseParts => Animation::PulseParts,
-            CliAnimation::TwirlWhole => Animation::TwirlWhole,
-            CliAnimation::TwirlParts => Animation::TwirlParts,
+            CliAnimation::None => Animation::None(to_lottie),
+            CliAnimation::PulseWhole => Animation::PulseWhole(to_lottie),
+            CliAnimation::PulseParts => Animation::PulseParts(to_lottie),
+            CliAnimation::TwirlWhole => Animation::TwirlWhole(to_lottie),
+            CliAnimation::TwirlParts => Animation::TwirlParts(to_lottie),
+            CliAnimation::Fill => Animation::None(to_lottie),
         }
     }
 }
@@ -73,10 +74,6 @@ fn main() {
     let font_file = Path::new(args.font.as_str());
     let font_bytes = fs::read(font_file).unwrap();
     let font = FontRef::new(&font_bytes).unwrap();
-    let upem = font.head().unwrap().units_per_em() as f64;
-    let font_drawbox: Rect = (Point::ZERO, Point::new(upem, upem)).into();
-    eprintln!("font_drawbox {font_drawbox:?}");
-    let outline_loader = font.outline_glyphs();
 
     let gid = if args.icon.starts_with("0x") {
         let codepoint = u32::from_str_radix(&args.icon[2..], 16).unwrap();
@@ -88,13 +85,15 @@ fn main() {
             .unwrap_or_else(|e| panic!("Unable to resolve '{}' to a glyph id: {e}", args.icon))
     };
 
-    let glyph = outline_loader
-        .get(gid)
-        .unwrap_or_else(|| panic!("No outline for {} (gid {gid})", args.icon));
+    let glyph_shape = GlyphShape::new(&font, gid).expect("Unable to create replacement");
+    let font_drawbox = glyph_shape.drawbox();
+    eprintln!("font_drawbox {:?}", font_drawbox);
 
     if args.debug {
-        let mut pen = DebugPen::new(Rect::new(0.0, 0.0, upem, upem));
-        glyph
+        let mut pen = DebugPen::new(font_drawbox);
+        font.outline_glyphs()
+            .get(gid)
+            .unwrap_or_else(|| panic!("No glyph for {gid}"))
             .draw(skrifa::instance::Size::unscaled(), &mut pen)
             .unwrap();
         let debug_out = Path::new(&args.out_file).with_extension("svg");
@@ -108,10 +107,8 @@ fn main() {
         default_template(&font_drawbox)
     };
 
-    let animation = args.animation.to_lib();
-    lottie
-        .replace_shape(&font_drawbox, &glyph, animation.animator().as_ref())
-        .expect("Failed to replace shape");
+    let animation = args.animation.to_lib(&glyph_shape);
+    lottie.replace_shape(&animation).expect("Failed to animate");
 
     let spring: Spring = AndroidSpring {
         damping: 0.8,
