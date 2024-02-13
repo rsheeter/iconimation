@@ -20,7 +20,8 @@ use bodymovin::{
 use kurbo::{Affine, BezPath, Point, Rect};
 use ordered_float::OrderedFloat;
 use skrifa::{
-    instance::Size,
+    instance::{Location, LocationRef, Size},
+    outline::DrawSettings,
     raw::{FontRef, TableProvider},
     GlyphId, MetadataProvider, OutlineGlyph,
 };
@@ -89,6 +90,9 @@ pub struct GlyphShape<'a> {
     font: &'a FontRef<'a>,
     glyph: OutlineGlyph<'a>,
     gid: GlyphId,
+    start: Location,
+    // If set, animate from start => end
+    end: Option<Location>,
 }
 
 impl<'a> Debug for GlyphShape<'a> {
@@ -100,12 +104,28 @@ impl<'a> Debug for GlyphShape<'a> {
 }
 
 impl<'a> GlyphShape<'a> {
-    pub fn new(font: &'a FontRef<'a>, gid: GlyphId) -> Result<Self, Error> {
+    pub fn new(
+        font: &'a FontRef<'a>,
+        gid: GlyphId,
+        start: Location,
+        mut end: Option<Location>,
+    ) -> Result<Self, Error> {
         let outline_loader = font.outline_glyphs();
         let Some(glyph) = outline_loader.get(gid) else {
             return Err(Error::NoOutline(gid));
         };
-        Ok(Self { font, glyph, gid })
+        if let Some(end_loc) = &end {
+            if start.coords() == end_loc.coords() {
+                end = None;
+            }
+        }
+        Ok(Self {
+            font,
+            glyph,
+            gid,
+            start,
+            end,
+        })
     }
 
     pub fn drawbox(&self) -> Rect {
@@ -117,7 +137,8 @@ impl<'a> GlyphShape<'a> {
 impl<'a> ToLottie for GlyphShape<'a> {
     fn create(&self, start: f64, end: f64, dest_box: Rect) -> Result<Vec<AnyShape>, Error> {
         let transform = rect_to_rect(self.drawbox(), dest_box);
-        let mut glyph_shapes: Vec<_> = subpaths_for_glyph(&self.glyph, transform)?;
+        let start_loc = (&self.start).into();
+        let mut glyph_shapes: Vec<_> = subpaths_for_glyph(&self.glyph, transform, start_loc)?;
         glyph_shapes.sort_by_cached_key(|(b, _)| {
             let bbox = b.control_box();
             (
@@ -125,7 +146,7 @@ impl<'a> ToLottie for GlyphShape<'a> {
                 (bbox.min_x() * 1000.0) as i64,
             )
         });
-        let subpaths = subpaths_for_glyph(&self.glyph, transform)?;
+        let subpaths = subpaths_for_glyph(&self.glyph, transform, start_loc)?;
 
         Ok(subpaths
             .into_iter()
@@ -292,7 +313,7 @@ pub(crate) fn bez_for_subpath(subpath: &SubPath) -> BezPath {
         path.move_to(value.vertices[0]);
     }
     // See SubPathPen for explanation of coords
-    for i in 0..value.vertices.len() {        
+    for i in 0..value.vertices.len() {
         let start: Point = value.vertices[i].into();
 
         let end: Point = if i + 1 < value.vertices.len() {
@@ -320,6 +341,7 @@ pub(crate) fn bez_for_subpath(subpath: &SubPath) -> BezPath {
 fn subpaths_for_glyph(
     glyph: &OutlineGlyph,
     font_units_to_lottie_units: Affine,
+    location: LocationRef,
 ) -> Result<Vec<(BezPath, SubPath)>, Error> {
     // Fonts draw Y-up, Lottie Y-down. The transform to transition should be negative determinant.
     // Normally a negative determinant flips curve direction but since we're also moving
@@ -331,8 +353,9 @@ fn subpaths_for_glyph(
 
     let mut subpath_pen = SubPathPen::default();
     let mut transform_pen = TransformPen::new(&mut subpath_pen, font_units_to_lottie_units);
+    let settings = DrawSettings::unhinted(Size::unscaled(), location);
     glyph
-        .draw(Size::unscaled(), &mut transform_pen)
+        .draw(settings, &mut transform_pen)
         .map_err(Error::DrawError)?;
 
     Ok(subpath_pen.into_shapes())

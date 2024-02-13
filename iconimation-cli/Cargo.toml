@@ -16,3 +16,5 @@ serde_json.workspace = true
 kurbo.workspace = true
 skrifa.workspace = true
 bodymovin.workspace = true
+
+thiserror.workspace = true

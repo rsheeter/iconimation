@@ -118,7 +118,7 @@ pub fn generate_lottie(raw_font: &ArrayBuffer, animation: String) -> Result<Stri
 
     let mut lottie = default_template(&font_drawbox);
 
-    let glyph_shape = GlyphShape::new(&font, gid)
+    let glyph_shape = GlyphShape::new(&font, gid, Default::default(), None)
         .map_err(|e| format!("Unable to create GlyphShape for {gid}: {e}"))?;
 
     let animation = command.animator(&glyph_shape);

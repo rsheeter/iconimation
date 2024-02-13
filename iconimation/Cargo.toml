@@ -12,6 +12,6 @@ bodymovin.workspace = true
 
 write-fonts = "0.21.0"  # pens
 
-thiserror = "1.0"
+thiserror.workspace = true
 
 ordered-float = "4.2"

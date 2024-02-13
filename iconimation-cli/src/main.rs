@@ -1,3 +1,4 @@
+use std::str::FromStr;
 use std::{fs, path::Path};
 
 use bodymovin::Bodymovin as Lottie;
@@ -11,9 +12,11 @@ use iconimation::AndroidSpring;
 use iconimation::GlyphShape;
 use iconimation::Spring;
 use iconimation::Template;
-use iconimation::ToLottie;
+use skrifa::instance::Location;
+use skrifa::raw::types::InvalidTag;
 use skrifa::raw::FontRef;
-use skrifa::MetadataProvider;
+use skrifa::{MetadataProvider, Tag};
+use thiserror::Error;
 
 /// Clap-friendly version of [Animation]
 #[derive(ValueEnum, Clone, Debug)]
@@ -23,18 +26,16 @@ pub enum CliAnimation {
     PulseParts,
     TwirlWhole,
     TwirlParts,
-    Fill,
 }
 
 impl CliAnimation {
-    fn to_lib<'a>(&self, to_lottie: &'a dyn ToLottie) -> Animation<'a> {
+    fn to_lib<'a>(&self, shape: &'a GlyphShape) -> Animation<'a> {
         match self {
-            CliAnimation::None => Animation::None(to_lottie),
-            CliAnimation::PulseWhole => Animation::PulseWhole(to_lottie),
-            CliAnimation::PulseParts => Animation::PulseParts(to_lottie),
-            CliAnimation::TwirlWhole => Animation::TwirlWhole(to_lottie),
-            CliAnimation::TwirlParts => Animation::TwirlParts(to_lottie),
-            CliAnimation::Fill => Animation::None(to_lottie),
+            CliAnimation::None => Animation::None(shape),
+            CliAnimation::PulseWhole => Animation::PulseWhole(shape),
+            CliAnimation::PulseParts => Animation::PulseParts(shape),
+            CliAnimation::TwirlWhole => Animation::TwirlWhole(shape),
+            CliAnimation::TwirlParts => Animation::TwirlParts(shape),
         }
     }
 }
@@ -56,6 +57,14 @@ struct Args {
     #[arg(long)]
     icon: String,
 
+    /// CSV of axis positions in user coords. If unset, the default location. E.g. FILL:0,wght:100
+    #[arg(long)]
+    from: Option<String>,
+
+    /// CSV of axis positions in user coords. If unset, the default location. E.g. FILL:1,wght:700
+    #[arg(long)]
+    to: Option<String>,
+
     #[arg(long)]
     template: Option<String>,
 
@@ -66,6 +75,46 @@ struct Args {
     #[arg(long)]
     #[clap(default_value = "output.json")]
     out_file: String,
+}
+
+#[derive(Debug, Error)]
+pub enum LocationError {
+    #[error("Position must be a csv of tag:value pairs, e.g. FILL:1,wght:100")]
+    InvalidPosition,
+    #[error("Invalid tag '{0}'")]
+    InvalidTag(InvalidTag),
+    #[error("Font does not support tag '{0}'")]
+    NoSuchAxis(Tag),
+    #[error("Unable to parse value of '{0}'")]
+    InvalidValue(Tag),
+    #[error("Value for '{0}' must be in [{1:.2}, {2:.2}]")]
+    OutOfBounds(Tag, f32, f32),
+}
+
+/// Avoid orphan rule
+trait LocationParser {
+    fn parse_location(&self, s: Option<&str>) -> Result<Location, LocationError>;
+}
+
+impl LocationParser for FontRef<'_> {
+    fn parse_location(&self, s: Option<&str>) -> Result<Location, LocationError> {
+        let Some(s) = s else {
+            return Ok(Location::default());
+        };
+        let mut axis_positions = Vec::new();
+        for raw_pos in s.split(',') {
+            let parts: Vec<_> = raw_pos.split(':').collect();
+            if parts.len() != 2 {
+                return Err(LocationError::InvalidPosition);
+            }
+            let tag = Tag::from_str(parts[0]).map_err(LocationError::InvalidTag)?;
+            let value: f32 = parts[1]
+                .parse()
+                .map_err(|_| LocationError::InvalidValue(tag))?;
+            axis_positions.push((tag, value));
+        }
+        Ok(self.axes().location(axis_positions))
+    }
 }
 
 fn main() {
@@ -85,7 +134,15 @@ fn main() {
             .unwrap_or_else(|e| panic!("Unable to resolve '{}' to a glyph id: {e}", args.icon))
     };
 
-    let glyph_shape = GlyphShape::new(&font, gid).expect("Unable to create replacement");
+    let start = font
+        .parse_location(args.from.as_deref())
+        .unwrap_or_else(|e| panic!("Unable to parse --from: {e}"));
+    let end = font
+        .parse_location(args.to.as_deref())
+        .unwrap_or_else(|e| panic!("Unable to parse --to: {e}"));
+
+    let glyph_shape =
+        GlyphShape::new(&font, gid, start, Some(end)).expect("Unable to create replacement");
     let font_drawbox = glyph_shape.drawbox();
     eprintln!("font_drawbox {:?}", font_drawbox);
 

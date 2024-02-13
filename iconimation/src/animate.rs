@@ -6,12 +6,11 @@ use std::fmt::Debug;
 
 use bodymovin::properties::{Bezier2d, BezierEase, MultiDimensionalKeyframe, Property};
 use bodymovin::properties::{ControlPoint2d, Value};
-use bodymovin::shapes::{AnyShape, Fill, Group, SubPath, Transform};
-use bodymovin::Bodymovin as Lottie;
+use bodymovin::shapes::{AnyShape, Fill, Group, Transform};
 use kurbo::{BezPath, PathEl, Point, Rect, Shape, Vec2};
 use ordered_float::OrderedFloat;
 
-use crate::{bez_for_subpath, Error, GlyphShape, Template, ToLottie};
+use crate::{bez_for_subpath, Error, ToLottie};
 
 #[derive(Debug)]
 pub enum Animation<'a> {
@@ -47,7 +46,7 @@ impl<'a> ToLottie for Animation<'a> {
                 Ok(group_icon_parts(shapes)
                     .into_iter()
                     .enumerate()
-                    .map(|(i, s)| pulse(start, end, i, s))
+                    .map(|(i, s)| twirl(start, end, i, s))
                     .collect())
             }
         }
@@ -213,7 +212,7 @@ impl LottieGeometry for AnyShape {
         Ok(match self {
             AnyShape::Shape(subpath) => bez_for_subpath(subpath),
             _ => todo!("to_bez {self:?}"),
-        })      
+        })
     }
 }
 
