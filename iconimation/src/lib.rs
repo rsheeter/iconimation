@@ -291,13 +291,27 @@ pub(crate) fn bez_for_subpath(subpath: &SubPath) -> BezPath {
     if !value.vertices.is_empty() {
         path.move_to(value.vertices[0]);
     }
-    for (start_end, (c0, c1)) in value
-        .vertices
-        .windows(2)
-        .zip(value.in_point.iter().zip(value.out_point.iter()))
-    {
-        let end = start_end[1];
-        path.curve_to(*c0, *c1, end);
+    // See SubPathPen for explanation of coords
+    for i in 0..value.vertices.len() {        
+        let start: Point = value.vertices[i].into();
+
+        let end: Point = if i + 1 < value.vertices.len() {
+            value.vertices[i + 1].into()
+        } else {
+            if value.closed.unwrap_or_default() {
+                value.vertices[0].into()
+            } else {
+                break;
+            }
+        };
+        let c0 = start + value.out_point[i];
+        let c1 = end + value.in_point[i];
+
+        path.curve_to(c0, c1, end);
+    }
+
+    if value.closed.unwrap_or_default() {
+        path.close_path();
     }
     path
 }

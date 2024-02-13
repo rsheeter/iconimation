@@ -105,7 +105,7 @@ pub fn group_icon_parts(shapes: Vec<AnyShape>) -> Vec<Vec<AnyShape>> {
         .map(|bez| {
             let Some(contained) = a_contained_point(bez) else {
                 if bez.area() != 0.0 {
-                    eprintln!("THERE IS NO CONTAINED POINT?!");
+                    eprintln!("THERE IS NO CONTAINED POINT?! {}", bez.to_svg());
                 }
                 return false;
             };
