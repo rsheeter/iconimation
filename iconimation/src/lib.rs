@@ -12,12 +12,15 @@ use std::{f64::consts::PI, fmt::Debug};
 use bodymovin::{
     helpers::Transform,
     layers::{AnyLayer, Layer, ShapeMixin},
-    properties::{MultiDimensionalKeyframe, Property, SplittableMultiDimensional, Value},
+    properties::{
+        Bezier2d, BezierEase, ControlPoint2d, MultiDimensionalKeyframe, Property, ShapeKeyframe,
+        ShapeValue, SplittableMultiDimensional, Value,
+    },
     shapes::{AnyShape, Group, SubPath},
     sources::Asset,
     Bodymovin as Lottie,
 };
-use kurbo::{Affine, BezPath, Point, Rect};
+use kurbo::{Affine, BezPath, PathEl, Point, Rect};
 use ordered_float::OrderedFloat;
 use skrifa::{
     instance::{Location, LocationRef, Size},
@@ -134,21 +137,99 @@ impl<'a> GlyphShape<'a> {
     }
 }
 
+fn path_commands(bez: &BezPath) -> String {
+    bez.elements()
+        .iter()
+        .map(|e| match e {
+            PathEl::ClosePath => 'Z',
+            PathEl::CurveTo(..) => 'C',
+            PathEl::LineTo(..) => 'L',
+            PathEl::MoveTo(..) => 'M',
+            PathEl::QuadTo(..) => 'Q',
+        })
+        .collect()
+}
+
 impl<'a> ToLottie for GlyphShape<'a> {
     fn create(&self, start: f64, end: f64, dest_box: Rect) -> Result<Vec<AnyShape>, Error> {
         let transform = rect_to_rect(self.drawbox(), dest_box);
-        let start_loc = (&self.start).into();
-        let mut glyph_shapes: Vec<_> = subpaths_for_glyph(&self.glyph, transform, start_loc)?;
-        glyph_shapes.sort_by_cached_key(|(b, _)| {
-            let bbox = b.control_box();
-            (
-                (bbox.min_y() * 1000.0) as i64,
-                (bbox.min_x() * 1000.0) as i64,
-            )
-        });
-        let subpaths = subpaths_for_glyph(&self.glyph, transform, start_loc)?;
 
-        Ok(subpaths
+        // We need at least the starting outline
+        let start_loc = (&self.start).into();
+        let mut start_shapes: Vec<_> = subpaths_for_glyph(&self.glyph, transform, start_loc)?;
+
+        // TODO: sort is unsafe unless we sort all shapes consistently. And the order might change across designspace.
+        // glyph_shapes.sort_by_cached_key(|(b, _)| {
+        //     let bbox = b.control_box();
+        //     (
+        //         (bbox.min_y() * 1000.0) as i64,
+        //         (bbox.min_x() * 1000.0) as i64,
+        //     )
+        // });
+
+        // Maybe there is an ending outline, and if there is there might be intermediary stops too
+        if let Some(end_loc) = self.end.as_ref() {
+            let end_shapes: Vec<_> = subpaths_for_glyph(&self.glyph, transform, end_loc.into())?;
+
+            let start_cmds = start_shapes
+                .iter()
+                .map(|(bez, _)| path_commands(bez))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let end_cmds = end_shapes
+                .iter()
+                .map(|(bez, _)| path_commands(bez))
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            // TODO: figure out where to swap shapes if start/end aren't compatible
+            // In theory you could swap several times such that start and end are compatible but there are swaps between. Don't care.
+            assert!(start_cmds == end_cmds);
+            eprintln!(
+                "OMG, we have {} start shapes and {} end shapes. Compatible? {}",
+                start_shapes.len(),
+                end_shapes.len(),
+                start_cmds == end_cmds
+            );
+
+            // https://lottiefiles.github.io/lottie-docs/playground/json_editor/ doesn't play if there is no ease
+            let ease = BezierEase::_2D(Bezier2d {
+                in_value: ControlPoint2d { x: 0.6, y: 1.0 },
+                out_value: ControlPoint2d { x: 0.4, y: 0.0 },
+            });
+
+            for ((_, start_path), (_, end_path)) in start_shapes.iter_mut().zip(end_shapes) {
+                let (Value::Fixed(start_value), Value::Fixed(end_value)) =
+                    (&start_path.vertices.value, end_path.vertices.value)
+                else {
+                    panic!("Subpaths should be fixed");
+                };
+
+                if *start_value == end_value {
+                    continue;
+                }
+
+                eprintln!("Generating animation");
+                start_path.vertices.animated = 1;
+                start_path.vertices.value = Value::Animated(vec![
+                    ShapeKeyframe {
+                        start_time: start,
+                        start_value: Some(vec![start_value.clone()]),
+                        // no ease, no render
+                        bezier: Some(ease.clone()),
+                        ..Default::default()
+                    },
+                    ShapeKeyframe {
+                        start_time: end,
+                        start_value: Some(vec![end_value]),
+                        bezier: Some(ease.clone()),
+                        ..Default::default()
+                    },
+                ]);
+            }
+        }
+
+        Ok(start_shapes
             .into_iter()
             .map(|(_, s)| AnyShape::Shape(s))
             .collect())
@@ -303,37 +384,56 @@ fn rect_to_rect(font_box: Rect, lottie_box: Rect) -> Affine {
     )
 }
 
-pub(crate) fn bez_for_subpath(subpath: &SubPath) -> BezPath {
-    let Value::Fixed(value) = &subpath.vertices.value else {
-        panic!("what is {subpath:?}");
-    };
-
-    let mut path = BezPath::new();
-    if !value.vertices.is_empty() {
-        path.move_to(value.vertices[0]);
+fn add_shape_to_path(path: &mut BezPath, shape: &ShapeValue) {
+    if !shape.vertices.is_empty() {
+        path.move_to(shape.vertices[0]);
     }
     // See SubPathPen for explanation of coords
-    for i in 0..value.vertices.len() {
-        let start: Point = value.vertices[i].into();
+    for i in 0..shape.vertices.len() {
+        let start: Point = shape.vertices[i].into();
 
-        let end: Point = if i + 1 < value.vertices.len() {
-            value.vertices[i + 1].into()
+        let end: Point = if i + 1 < shape.vertices.len() {
+            shape.vertices[i + 1].into()
         } else {
-            if value.closed.unwrap_or_default() {
-                value.vertices[0].into()
+            if shape.closed.unwrap_or_default() {
+                shape.vertices[0].into()
             } else {
                 break;
             }
         };
-        let c0 = start + value.out_point[i];
-        let c1 = end + value.in_point[i];
+        let c0 = start + shape.out_point[i];
+        let c1 = end + shape.in_point[i];
 
         path.curve_to(c0, c1, end);
     }
 
-    if value.closed.unwrap_or_default() {
+    if shape.closed.unwrap_or_default() {
         path.close_path();
     }
+}
+
+pub(crate) fn bez_for_subpath(subpath: &SubPath) -> BezPath {
+    let mut path = BezPath::new();
+    match &subpath.vertices.value {
+        Value::Fixed(shape) => add_shape_to_path(&mut path, shape),
+        Value::Animated(value) => {
+            let first_keyframe = value
+                .iter()
+                .reduce(|acc, e| {
+                    if acc.start_time <= e.start_time {
+                        acc
+                    } else {
+                        e
+                    }
+                })
+                .and_then(|sk| sk.start_value.as_ref());
+            if let Some(first_keyframe) = first_keyframe {
+                for shape in first_keyframe.iter() {
+                    add_shape_to_path(&mut path, shape);
+                }
+            }
+        }
+    };
     path
 }
 

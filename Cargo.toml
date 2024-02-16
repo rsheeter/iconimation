@@ -3,7 +3,7 @@ kurbo = "0.10"
 skrifa = "0.15.1"
 
 # should be a clone of https://github.com/rsheeter/bodymovin-rs
-# bodymovin = { path = "../bodymovin-rs" }
+#bodymovin = { path = "../bodymovin-rs" }
 bodymovin = { git = "https://github.com/rsheeter/bodymovin-rs" }
 
 serde_json = "1.0"
