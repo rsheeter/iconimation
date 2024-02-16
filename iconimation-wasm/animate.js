@@ -35,10 +35,9 @@ export function generate_and_play_animation(command) {
         return;
     }
     result.innerText += "success!\n" + animation.debug;
-    console.log(animation.debug);
     lottie_content.innerText = JSON.stringify(animation.lottie, null, 2);
     avd_content.innerText = JSON.stringify(animation.avd, null, 2);
-    console.log(lottie);
-    player.load(lottie);
+    console.log(animation);
+    player.load(animation.lottie);
     player.play();
 }
