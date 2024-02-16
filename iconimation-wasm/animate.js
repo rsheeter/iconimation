@@ -2,12 +2,13 @@
 // modified to not specify any axis positions
 let ttf_url = "https://fonts.gstatic.com/s/materialsymbolsoutlined/v161/kJEhBvYX7BgnkSrUwT8OhrdQw4oELdPIeeII9v6oFsc.ttf";
 
-import init, { generate_lottie } from './pkg/iconimation_wasm.js';
+import init, { generate_animation } from './pkg/iconimation_wasm.js';
 
 var font_buffer = null;
 let result = document.getElementById("result");
 let player = document.getElementById("player")
 let lottie_content = document.getElementById("lottie_content");
+let avd_content = document.getElementById("avd_content");
 
 export async function initialize() {
     console.log("Initialize...");
@@ -23,19 +24,20 @@ export function generate_and_play_animation(command) {
     console.log("generate_and_play_animation " + command);
     result.innerText = "Generating... ";
     lottie_content.innerText = '';
-    var lottie;
+    var animation;
     try {
-        lottie = generate_lottie(font_buffer, command);
-        lottie = JSON.parse(lottie);
+        animation = generate_animation(font_buffer, command);
+        animation = JSON.parse(animation);
     } catch (e) {
         let message = `ERROR ${e}`;
         console.log(message);
         result.innerText += message;
         return;
     }
-    result.innerText += "success!\n" + lottie.nm;
-    console.log(lottie.nm);
-    lottie_content.innerText = JSON.stringify(lottie, null, 2);
+    result.innerText += "success!\n" + animation.debug;
+    console.log(animation.debug);
+    lottie_content.innerText = JSON.stringify(animation.lottie, null, 2);
+    avd_content.innerText = JSON.stringify(animation.avd, null, 2);
     console.log(lottie);
     player.load(lottie);
     player.play();

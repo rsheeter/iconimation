@@ -2,6 +2,7 @@
 
 use std::{str::FromStr, sync::OnceLock};
 
+use bodymovin::Bodymovin as Lottie;
 use iconimation::{
     animate::Animation, default_template, ligate::icon_name_to_gid, GlyphShape, Template, ToLottie,
 };
@@ -9,6 +10,7 @@ use kurbo::{Point, Rect};
 use regex::{Captures, Regex};
 
 use js_sys::{ArrayBuffer, Uint8Array};
+use serde::Serialize;
 use skrifa::{
     raw::{FontRef, TableProvider},
     MetadataProvider, Tag,
@@ -182,8 +184,15 @@ fn parse_location(raw: &str) -> Result<UserLocation, String> {
         .collect::<Result<_, _>>()
 }
 
+#[derive(Serialize)]
+struct Animations {
+    lottie: Lottie,
+    avd: String,
+    debug: String,
+}
+
 #[wasm_bindgen]
-pub fn generate_lottie(raw_font: &ArrayBuffer, animation: String) -> Result<String, String> {
+pub fn generate_animation(raw_font: &ArrayBuffer, animation: String) -> Result<String, String> {
     let command = Command::parse(&animation)?;
 
     let rust_buf = Uint8Array::new(raw_font).to_vec();
@@ -200,14 +209,14 @@ pub fn generate_lottie(raw_font: &ArrayBuffer, animation: String) -> Result<Stri
     let from = font.axes().location(&raw_from);
     let to = font.axes().location(&raw_to);
 
-    lottie.name = Some(format!(
+    let debug = format!(
         "{command:?}\n{raw_from:?} location {from:?}\n{raw_to:?} location {to:?}\naxes {}",
         font.axes()
             .iter()
             .map(|a| a.tag().to_string())
             .collect::<Vec<_>>()
             .join(", ")
-    ));
+    );
 
     let glyph_shape = GlyphShape::new(&font, gid, from, Some(to))
         .map_err(|e| format!("Unable to create GlyphShape for {gid}: {e}"))?;
@@ -217,7 +226,12 @@ pub fn generate_lottie(raw_font: &ArrayBuffer, animation: String) -> Result<Stri
         .replace_shape(&animation)
         .map_err(|e| format!("Unable to animate {gid}: {e}"))?;
 
-    Ok(serde_json::to_string_pretty(&lottie).unwrap())
+    Ok(serde_json::to_string_pretty(&Animations {
+        lottie,
+        avd: "TODO".to_string(),
+        debug,
+    })
+    .unwrap())
 }
 
 #[cfg(test)]
