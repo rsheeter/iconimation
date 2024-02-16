@@ -14,6 +14,11 @@
     #result {
         font-size: 16pt;
     }
+
+    .codegrid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
     </style>
   </head>
   <body>
@@ -31,6 +36,7 @@
         <ul>
             <li>Animate pause_circle: twirl</li>
             <li>Animate play_circle: none vary FILL:0 to FILL:1</li>
+            <li>Animate stadia_controller: twirl-whole vary FILL:1,wght:700 to FILL:0,wght:100</li>
             <li>Animate more_horiz: pulse</li>
             <li>Animate settings: pulse-whole</li>
             <li>Animate settings: twirl vary wght:100 to wght:700</li>
@@ -38,6 +44,8 @@
             <li>(TODO) Animate settings: rotate 360 degrees using expressive-spatial</li>
             <li>(TODO) Animate check_circle: scale 0 to 100 using expressive-spatial</li>
         </ul>
+        <br/>
+        Animating FILL has interesting in-between states, ex <a href="https://codepen.io/rs42/pen/qBvgQpR">https://codepen.io/rs42/pen/qBvgQpR</a>.
     </div>
     <div>
         <input id="command" size="156" placeholder="Enter an animation definition and press Enter">
@@ -49,28 +57,26 @@
     <lottie-player id="player" mode="normal" loop style="width: 30vw;">
     </lottie-player>
 
-    <button id="copy">Copy lottie</button>
-    <label for="copy">You could paste it into
-      <a href="https://lottiefiles.github.io/lottie-docs/playground/json_editor/">https://lottiefiles.github.io/lottie-docs/playground/json_editor/</a>
-    </label>
-    <pre id="lottie_content"></pre>
+    <div class="codegrid">
+      <div class="codegrid_cell">
+        <button id="copy_lottie">Copy lottie</button>
+        <label for="copy_lottie">You could paste it into
+          <a href="https://lottiefiles.github.io/lottie-docs/playground/json_editor/">https://lottiefiles.github.io/lottie-docs/playground/json_editor/</a>
+        </label>
+        <pre id="lottie_content" class="cell"></pre>
+      </div>
+      <div class="codegrid_cell">
+        <button id="copy_avd">Copy Android Vector Drawable</button>
+        <label for="copy_avd">You could paste it into
+          res/drawable/SOMETHING.xml in an Android Studio project
+        </label>
+        <pre id="avd_content" class="cell"></pre>
+      </div>
+    </div>
 
     <script>
-        document.addEventListener("DOMContentLoaded", async (event) => {
-          const animate = await import ('./animate.js');
-
-          await animate.initialize();
-
-          let cmd = document.getElementById("command");
-          let copy = document.getElementById("copy");
-
-          cmd.addEventListener("keydown", function(event) {
-            if (event.keyCode != 13) return;
-            animate.generate_and_play_animation(cmd.value);
-          });
-
-          copy.addEventListener("click", function() {
-            navigator.clipboard.writeText(lottie_content.innerText).then(
+        function copy_content(from) {
+          navigator.clipboard.writeText(from.innerText).then(
               () => {
                 result.innerText = "Copied!";
               },
@@ -78,7 +84,24 @@
                 result.innerText = "Copy failed :(";
               },
             );
+        }
+
+        document.addEventListener("DOMContentLoaded", async (event) => {
+          const animate = await import ('./animate.js');
+
+          await animate.initialize();
+
+          let cmd = document.getElementById("command");
+
+          cmd.addEventListener("keydown", function(event) {
+            if (event.keyCode != 13) return;
+            animate.generate_and_play_animation(cmd.value);
           });
+
+          document.getElementById("copy_lottie")
+            .addEventListener("click", function() { copy_content(lottie_content) });
+          document.getElementById("copy_avd")
+            .addEventListener("click", function() { copy_content(avd_content) });
 
           const query_cmd = new URLSearchParams(window.location.search).get('cmd');
           console.log(`Loaded, query cmd ${query_cmd}`);
