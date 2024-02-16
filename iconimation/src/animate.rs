@@ -2,117 +2,54 @@
 //!
 //! Typically supports both a whole-icon and parts mode where parts animate offset slightly in time.
 
+use std::fmt::Debug;
+
 use bodymovin::properties::{Bezier2d, BezierEase, MultiDimensionalKeyframe, Property};
 use bodymovin::properties::{ControlPoint2d, Value};
-use bodymovin::shapes::{AnyShape, Fill, Group, SubPath, Transform};
-use kurbo::{BezPath, PathEl, Point, Shape, Vec2};
+use bodymovin::shapes::{AnyShape, Fill, Group, Transform};
+use kurbo::{BezPath, PathEl, Point, Rect, Shape, Vec2};
 use ordered_float::OrderedFloat;
 
-use crate::Error;
+use crate::{bez_for_subpath, Error, ToLottie};
 
-#[derive(Clone, Debug)]
-pub enum Animation {
-    None,
-    PulseWhole,
-    PulseParts,
-    TwirlWhole,
-    TwirlParts,
+#[derive(Debug)]
+pub enum Animation<'a> {
+    None(&'a dyn ToLottie),
+    PulseWhole(&'a dyn ToLottie),
+    PulseParts(&'a dyn ToLottie),
+    TwirlWhole(&'a dyn ToLottie),
+    TwirlParts(&'a dyn ToLottie),
 }
 
-impl Animation {
-    pub fn animator(&self) -> Box<dyn Animator> {
+impl<'a> ToLottie for Animation<'a> {
+    fn create(&self, start: f64, end: f64, dest_box: Rect) -> Result<Vec<AnyShape>, Error> {
         match self {
-            Animation::None => Box::new(Still),
-            Animation::PulseWhole => Box::new(Pulse),
-            Animation::PulseParts => Box::new(PulseParts),
-            Animation::TwirlWhole => Box::new(Twirl),
-            Animation::TwirlParts => Box::new(TwirlParts),
+            Animation::None(to_lottie) => to_lottie.create(start, end, dest_box),
+            Animation::PulseWhole(to_lottie) => {
+                let shapes = to_lottie.create(start, end, dest_box)?;
+                Ok(vec![pulse(start, end, 0, shapes)])
+            }
+            Animation::TwirlWhole(to_lottie) => {
+                let shapes = to_lottie.create(start, end, dest_box)?;
+                Ok(vec![twirl(start, end, 0, shapes)])
+            }
+            Animation::PulseParts(to_lottie) => {
+                let shapes = to_lottie.create(start, end, dest_box)?;
+                Ok(group_icon_parts(shapes)
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, s)| pulse(start, end, i, s))
+                    .collect())
+            }
+            Animation::TwirlParts(to_lottie) => {
+                let shapes = to_lottie.create(start, end, dest_box)?;
+                Ok(group_icon_parts(shapes)
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, s)| twirl(start, end, i, s))
+                    .collect())
+            }
         }
-    }
-}
-
-pub trait Animator {
-    fn animate(
-        &self,
-        start: f64,
-        end: f64,
-        shapes: Vec<(BezPath, SubPath)>,
-    ) -> Result<Vec<AnyShape>, Error>;
-}
-
-pub struct Still;
-
-impl Animator for Still {
-    fn animate(
-        &self,
-        _: f64,
-        _: f64,
-        shapes: Vec<(BezPath, SubPath)>,
-    ) -> Result<Vec<AnyShape>, Error> {
-        Ok(shapes
-            .into_iter()
-            .map(|(_, s)| AnyShape::Shape(s))
-            .collect())
-    }
-}
-
-pub struct Pulse;
-
-impl Animator for Pulse {
-    fn animate(
-        &self,
-        start: f64,
-        end: f64,
-        shapes: Vec<(BezPath, SubPath)>,
-    ) -> Result<Vec<AnyShape>, Error> {
-        Ok(vec![pulse(start, end, 0, shapes)])
-    }
-}
-
-pub struct PulseParts;
-
-impl Animator for PulseParts {
-    fn animate(
-        &self,
-        start: f64,
-        end: f64,
-        shapes: Vec<(BezPath, SubPath)>,
-    ) -> Result<Vec<AnyShape>, Error> {
-        Ok(group_icon_parts(shapes)
-            .into_iter()
-            .enumerate()
-            .map(|(i, s)| pulse(start, end, i, s))
-            .collect())
-    }
-}
-
-pub struct Twirl;
-
-impl Animator for Twirl {
-    fn animate(
-        &self,
-        start: f64,
-        end: f64,
-        shapes: Vec<(BezPath, SubPath)>,
-    ) -> Result<Vec<AnyShape>, Error> {
-        Ok(vec![twirl(start, end, 0, shapes)])
-    }
-}
-
-pub struct TwirlParts;
-
-impl Animator for TwirlParts {
-    fn animate(
-        &self,
-        start: f64,
-        end: f64,
-        shapes: Vec<(BezPath, SubPath)>,
-    ) -> Result<Vec<AnyShape>, Error> {
-        Ok(group_icon_parts(shapes)
-            .into_iter()
-            .enumerate()
-            .map(|(i, s)| twirl(start, end, i, s))
-            .collect())
     }
 }
 
@@ -157,18 +94,21 @@ pub fn a_contained_point(subpath: &BezPath) -> Option<Point> {
 /// Since we are using non-zero fill, figure out shape by shape what the winding value is. Initially I thought
 /// we could simply look at the direction from [`BezPath::area`] but that ofc isn't enough to know if the final
 /// winding is nonzero.
-pub fn group_icon_parts(shapes: Vec<(BezPath, SubPath)>) -> Vec<Vec<(BezPath, SubPath)>> {
+pub fn group_icon_parts(shapes: Vec<AnyShape>) -> Vec<Vec<AnyShape>> {
+    // TODO: generalize. For now just assume input is all paths.
+    let paths: Vec<_> = shapes.iter().map(|s| s.to_bez().unwrap()).collect();
+
     // Figure out what is/isn't filled
-    let filled: Vec<_> = shapes
+    let filled: Vec<_> = paths
         .iter()
-        .map(|(bez, _)| {
+        .map(|bez| {
             let Some(contained) = a_contained_point(bez) else {
                 if bez.area() != 0.0 {
-                    eprintln!("THERE IS NO CONTAINED POINT?!");
+                    eprintln!("THERE IS NO CONTAINED POINT?! {}", bez.to_svg());
                 }
                 return false;
             };
-            let winding: i32 = shapes.iter().map(|(bez, _)| bez.winding(contained)).sum();
+            let winding: i32 = paths.iter().map(|bez| bez.winding(contained)).sum();
             winding != 0
         })
         .collect();
@@ -178,21 +118,22 @@ pub fn group_icon_parts(shapes: Vec<(BezPath, SubPath)>) -> Vec<Vec<(BezPath, Su
     ordered.sort_by_cached_key(|i| {
         (
             -(filled[*i] as i32),
-            OrderedFloat(shapes[*i].0.bounding_box().area()),
+            OrderedFloat(paths[*i].bounding_box().area()),
         )
     });
 
     // Group cutouts with the smallest containing filled subpath
     // Doesn't generalize but perhaps suffices for icons
     // In each group [0] must exist and is a filled subpath, [1..n] are optional and are unfilled
-    let mut groups: Vec<Vec<(BezPath, SubPath)>> = Default::default();
+    let mut groups: Vec<Vec<AnyShape>> = Default::default();
     let mut bboxes = Vec::default(); // the bbox of group[n][0] is bbox[n]
     for i in ordered {
-        let (bez, subpath) = shapes.get(i).unwrap().clone();
+        let bez = &paths[i];
+        let shape = &shapes[i];
         let bbox = bez.bounding_box();
         if filled[i] {
             // start a new group for a filled subpath
-            groups.push(vec![(bez, subpath)]);
+            groups.push(vec![shape.clone()]);
             bboxes.push(bbox);
         } else {
             // add cutout to the smallest (first, courtesy of sort above) containing filled subpath
@@ -200,7 +141,7 @@ pub fn group_icon_parts(shapes: Vec<(BezPath, SubPath)>) -> Vec<Vec<(BezPath, Su
                 .iter()
                 .position(|group_bbox| group_bbox.intersect(bbox) == bbox)
             {
-                groups[i].push((bez, subpath));
+                groups[i].push(shape.clone());
             } else {
                 eprintln!(
                     "Uh oh, we have an unfilled shape that didn't land anywhere! {}",
@@ -231,19 +172,13 @@ fn nth_group_color(n: usize) -> (u8, u8, u8) {
     COLORS[n % COLORS.len()]
 }
 
-fn group_with_transform(
-    shape_idx: usize,
-    shapes: Vec<(BezPath, SubPath)>,
-    transform: Transform,
-) -> AnyShape {
+fn group_with_transform(shape_idx: usize, shapes: Vec<AnyShape>, transform: Transform) -> AnyShape {
     // https://lottiefiles.github.io/lottie-docs/breakdown/bouncy_ball/#transform
     // says players like to find a transform at the end of a group and having a fill before
     // the transform seems fairly ubiquotous so we'll build our pulse as a group
     // of [shapes, fill, animated transform]
     let mut group = Group::default();
-    group
-        .items
-        .extend(shapes.into_iter().map(|(_, s)| AnyShape::Shape(s)));
+    group.items.extend(shapes);
 
     let (r, g, b) = nth_group_color(shape_idx);
 
@@ -262,16 +197,35 @@ fn group_with_transform(
     AnyShape::Group(group)
 }
 
-fn center(shapes: &[(BezPath, SubPath)]) -> Point {
+pub(crate) trait LottieGeometry {
+    fn bounding_box(&self) -> Option<Rect>;
+
+    fn to_bez(&self) -> Result<BezPath, Error>;
+}
+
+impl LottieGeometry for AnyShape {
+    fn bounding_box(&self) -> Option<Rect> {
+        self.to_bez().map(|b| b.bounding_box()).ok()
+    }
+
+    fn to_bez(&self) -> Result<BezPath, Error> {
+        Ok(match self {
+            AnyShape::Shape(subpath) => bez_for_subpath(subpath),
+            _ => todo!("to_bez {self:?}"),
+        })
+    }
+}
+
+fn center(shapes: &[AnyShape]) -> Point {
     shapes
         .iter()
-        .map(|(b, _)| b.bounding_box())
+        .filter_map(|s| s.bounding_box())
         .reduce(|acc, e| acc.union(e))
         .map(|b| b.center())
         .unwrap_or_default()
 }
 
-fn pulse(start: f64, end: f64, shape_idx: usize, shapes: Vec<(BezPath, SubPath)>) -> AnyShape {
+fn pulse(start: f64, end: f64, shape_idx: usize, shapes: Vec<AnyShape>) -> AnyShape {
     assert!(end > start);
 
     let i = shape_idx as f64;
@@ -313,7 +267,7 @@ fn pulse(start: f64, end: f64, shape_idx: usize, shapes: Vec<(BezPath, SubPath)>
     group_with_transform(shape_idx, shapes, transform)
 }
 
-fn twirl(start: f64, end: f64, shape_idx: usize, shapes: Vec<(BezPath, SubPath)>) -> AnyShape {
+fn twirl(start: f64, end: f64, shape_idx: usize, shapes: Vec<AnyShape>) -> AnyShape {
     assert!(end > start);
 
     let i = shape_idx as f64;

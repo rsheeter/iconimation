@@ -27,12 +27,13 @@
     <div class="hint">
         Downloads font, generates Lottie on demand using wasm.<br/>
         <br/>
-        You could try:<br/>
+        Sample commands:<br/>
         <ul>
             <li>Animate pause_circle: twirl</li>
+            <li>Animate play_circle: none vary FILL:0 to FILL:1</li>
             <li>Animate more_horiz: pulse</li>
             <li>Animate settings: pulse-whole</li>
-            <li>Animate settings: twirl</li>
+            <li>Animate settings: twirl vary wght:100 to wght:700</li>
             <li>Animate bolt: twirl-whole</li>
             <li>(TODO) Animate settings: rotate 360 degrees using expressive-spatial</li>
             <li>(TODO) Animate check_circle: scale 0 to 100 using expressive-spatial</li>
@@ -45,7 +46,7 @@
         <span id="result">&nbsp;</span>
     </div>
 
-    <lottie-player id="player" mode="normal" style="width: 30vw;">
+    <lottie-player id="player" mode="normal" loop style="width: 30vw;">
     </lottie-player>
 
     <button id="copy">Copy lottie</button>

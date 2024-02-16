@@ -7,22 +7,30 @@ pub mod ligate;
 mod shape_pen;
 pub mod spring;
 
-use std::f64::consts::PI;
+use std::{f64::consts::PI, fmt::Debug};
 
 use bodymovin::{
     helpers::Transform,
     layers::{AnyLayer, Layer, ShapeMixin},
-    properties::{MultiDimensionalKeyframe, Property, SplittableMultiDimensional, Value},
+    properties::{
+        Bezier2d, BezierEase, ControlPoint2d, MultiDimensionalKeyframe, Property, ShapeKeyframe,
+        ShapeValue, SplittableMultiDimensional, Value,
+    },
     shapes::{AnyShape, Group, SubPath},
     sources::Asset,
     Bodymovin as Lottie,
 };
-use kurbo::{Affine, BezPath, Rect};
+use kurbo::{Affine, BezPath, PathEl, Point, Rect};
 use ordered_float::OrderedFloat;
-use skrifa::{instance::Size, OutlineGlyph};
+use skrifa::{
+    instance::{Location, LocationRef, Size},
+    outline::DrawSettings,
+    raw::{FontRef, TableProvider},
+    GlyphId, MetadataProvider, OutlineGlyph,
+};
 use write_fonts::pens::TransformPen;
 
-use crate::{animate::Animator, error::Error, shape_pen::SubPathPen};
+use crate::{error::Error, shape_pen::SubPathPen};
 
 pub fn default_template(font_drawbox: &Rect) -> Lottie {
     Lottie {
@@ -76,13 +84,160 @@ pub fn default_template(font_drawbox: &Rect) -> Lottie {
     }
 }
 
+/// Produces things that could replace a placeholder in a Lottie [`Template`]
+pub trait ToLottie: Debug {
+    fn create(&self, start: f64, end: f64, dest_box: Rect) -> Result<Vec<AnyShape>, Error>;
+}
+
+pub struct GlyphShape<'a> {
+    font: &'a FontRef<'a>,
+    glyph: OutlineGlyph<'a>,
+    gid: GlyphId,
+    start: Location,
+    // If set, animate from start => end
+    end: Option<Location>,
+}
+
+impl<'a> Debug for GlyphShape<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GlyphShape")
+            .field("gid", &self.gid)
+            .finish()
+    }
+}
+
+impl<'a> GlyphShape<'a> {
+    pub fn new(
+        font: &'a FontRef<'a>,
+        gid: GlyphId,
+        start: Location,
+        mut end: Option<Location>,
+    ) -> Result<Self, Error> {
+        let outline_loader = font.outline_glyphs();
+        let Some(glyph) = outline_loader.get(gid) else {
+            return Err(Error::NoOutline(gid));
+        };
+        if let Some(end_loc) = &end {
+            if start.coords() == end_loc.coords() {
+                end = None;
+            }
+        }
+        Ok(Self {
+            font,
+            glyph,
+            gid,
+            start,
+            end,
+        })
+    }
+
+    pub fn drawbox(&self) -> Rect {
+        let upem = self.font.head().unwrap().units_per_em() as f64;
+        (Point::ZERO, Point::new(upem, upem)).into()
+    }
+}
+
+fn path_commands(bez: &BezPath) -> String {
+    bez.elements()
+        .iter()
+        .map(|e| match e {
+            PathEl::ClosePath => 'Z',
+            PathEl::CurveTo(..) => 'C',
+            PathEl::LineTo(..) => 'L',
+            PathEl::MoveTo(..) => 'M',
+            PathEl::QuadTo(..) => 'Q',
+        })
+        .collect()
+}
+
+impl<'a> ToLottie for GlyphShape<'a> {
+    fn create(&self, start: f64, end: f64, dest_box: Rect) -> Result<Vec<AnyShape>, Error> {
+        let transform = rect_to_rect(self.drawbox(), dest_box);
+
+        // We need at least the starting outline
+        let start_loc = (&self.start).into();
+        let mut start_shapes: Vec<_> = subpaths_for_glyph(&self.glyph, transform, start_loc)?;
+
+        // TODO: sort is unsafe unless we sort all shapes consistently. And the order might change across designspace.
+        // glyph_shapes.sort_by_cached_key(|(b, _)| {
+        //     let bbox = b.control_box();
+        //     (
+        //         (bbox.min_y() * 1000.0) as i64,
+        //         (bbox.min_x() * 1000.0) as i64,
+        //     )
+        // });
+
+        // Maybe there is an ending outline, and if there is there might be intermediary stops too
+        if let Some(end_loc) = self.end.as_ref() {
+            let end_shapes: Vec<_> = subpaths_for_glyph(&self.glyph, transform, end_loc.into())?;
+
+            let start_cmds = start_shapes
+                .iter()
+                .map(|(bez, _)| path_commands(bez))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let end_cmds = end_shapes
+                .iter()
+                .map(|(bez, _)| path_commands(bez))
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            // TODO: figure out where to swap shapes if start/end aren't compatible
+            // In theory you could swap several times such that start and end are compatible but there are swaps between. Don't care.
+            assert!(start_cmds == end_cmds);
+            eprintln!(
+                "OMG, we have {} start shapes and {} end shapes. Compatible? {}",
+                start_shapes.len(),
+                end_shapes.len(),
+                start_cmds == end_cmds
+            );
+
+            // https://lottiefiles.github.io/lottie-docs/playground/json_editor/ doesn't play if there is no ease
+            let ease = BezierEase::_2D(Bezier2d {
+                in_value: ControlPoint2d { x: 0.6, y: 1.0 },
+                out_value: ControlPoint2d { x: 0.4, y: 0.0 },
+            });
+
+            for ((_, start_path), (_, end_path)) in start_shapes.iter_mut().zip(end_shapes) {
+                let (Value::Fixed(start_value), Value::Fixed(end_value)) =
+                    (&start_path.vertices.value, end_path.vertices.value)
+                else {
+                    panic!("Subpaths should be fixed");
+                };
+
+                if *start_value == end_value {
+                    continue;
+                }
+
+                eprintln!("Generating animation");
+                start_path.vertices.animated = 1;
+                start_path.vertices.value = Value::Animated(vec![
+                    ShapeKeyframe {
+                        start_time: start,
+                        start_value: Some(vec![start_value.clone()]),
+                        // no ease, no render
+                        bezier: Some(ease.clone()),
+                        ..Default::default()
+                    },
+                    ShapeKeyframe {
+                        start_time: end,
+                        start_value: Some(vec![end_value]),
+                        bezier: Some(ease.clone()),
+                        ..Default::default()
+                    },
+                ]);
+            }
+        }
+
+        Ok(start_shapes
+            .into_iter()
+            .map(|(_, s)| AnyShape::Shape(s))
+            .collect())
+    }
+}
+
 pub trait Template {
-    fn replace_shape(
-        &mut self,
-        font_drawbox: &Rect,
-        glyph: &OutlineGlyph,
-        animator: &dyn Animator,
-    ) -> Result<(), Error>;
+    fn replace_shape(&mut self, replacer: &impl ToLottie) -> Result<(), Error>;
 
     fn spring(&mut self, spring: Spring) -> Result<(), Error>;
 }
@@ -99,12 +254,7 @@ fn placeholders(layer: &mut Layer<ShapeMixin>) -> Vec<&mut Group> {
         .collect()
 }
 
-fn replace_placeholders(
-    layers: &mut [AnyLayer],
-    font_drawbox: &Rect,
-    glyph: &OutlineGlyph,
-    animator: &dyn Animator,
-) -> Result<usize, Error> {
+fn replace_placeholders(layers: &mut [AnyLayer], replacer: &impl ToLottie) -> Result<usize, Error> {
     let mut shapes_updated = 0;
     for layer in layers.iter_mut() {
         let AnyLayer::Shape(layer) = layer else {
@@ -143,23 +293,12 @@ fn replace_placeholders(
                 let Some(lottie_box) = lottie_box else {
                     continue;
                 };
-                let font_to_lottie = font_units_to_lottie_units(font_drawbox, &lottie_box);
-                insert_at.push((i, font_to_lottie));
+                insert_at.push((i, lottie_box));
             }
             // reverse because replacing 1:n shifts indices past our own
-            for (i, transform) in insert_at.iter().rev() {
-                eprintln!("Replace {} using {:?}", shapes_updated + i, transform);
-                let mut glyph_shapes: Vec<_> = subpaths_for_glyph(glyph, *transform)?;
-                glyph_shapes.sort_by_cached_key(|(b, _)| {
-                    let bbox = b.control_box();
-                    (
-                        (bbox.min_y() * 1000.0) as i64,
-                        (bbox.min_x() * 1000.0) as i64,
-                    )
-                });
-                eprintln!("Animating {} glyph shapes", glyph_shapes.len());
-                let animated_shapes = animator.animate(start, end, glyph_shapes)?;
-                placeholder.items.splice(*i..(*i + 1), animated_shapes);
+            for (i, dest_box) in insert_at.iter().rev() {
+                let glyph_shapes = replacer.create(start, end, *dest_box)?;
+                placeholder.items.splice(*i..(*i + 1), glyph_shapes);
             }
             shapes_updated += insert_at.len();
         }
@@ -168,19 +307,11 @@ fn replace_placeholders(
 }
 
 impl Template for Lottie {
-    fn replace_shape(
-        &mut self,
-        font_drawbox: &Rect,
-        glyph: &OutlineGlyph,
-        animator: &dyn Animator,
-    ) -> Result<(), Error> {
-        let mut shapes_updated =
-            replace_placeholders(&mut self.layers, font_drawbox, glyph, animator)?;
+    fn replace_shape(&mut self, replacer: &impl ToLottie) -> Result<(), Error> {
+        let mut shapes_updated = replace_placeholders(&mut self.layers, replacer)?;
         for asset in self.assets.iter_mut() {
             shapes_updated += match asset {
-                Asset::PreComp(precomp) => {
-                    replace_placeholders(&mut precomp.layers, font_drawbox, glyph, animator)?
-                }
+                Asset::PreComp(precomp) => replace_placeholders(&mut precomp.layers, replacer)?,
                 Asset::Image(..) => 0,
             }
         }
@@ -224,7 +355,7 @@ impl Template for Lottie {
 }
 
 /// Simplified version of [Affine2D::rect_to_rect](https://github.com/googlefonts/picosvg/blob/a0bcfade7a60cbd6f47d8bfe65b6d471cee628c0/src/picosvg/svg_transform.py#L216-L263)
-fn font_units_to_lottie_units(font_box: &Rect, lottie_box: &Rect) -> Affine {
+fn rect_to_rect(font_box: Rect, lottie_box: Rect) -> Affine {
     assert!(font_box.width() > 0.0);
     assert!(font_box.height() > 0.0);
     assert!(lottie_box.width() > 0.0);
@@ -243,7 +374,7 @@ fn font_units_to_lottie_units(font_box: &Rect, lottie_box: &Rect) -> Affine {
         .then_scale_non_uniform(sx, sy);
 
     // Line up
-    let adjusted_font_box = transform.transform_rect_bbox(*font_box);
+    let adjusted_font_box = transform.transform_rect_bbox(font_box);
     transform.then_translate(
         (
             lottie_box.min_x() - adjusted_font_box.min_x(),
@@ -253,23 +384,54 @@ fn font_units_to_lottie_units(font_box: &Rect, lottie_box: &Rect) -> Affine {
     )
 }
 
-fn bez_for_subpath(subpath: &SubPath) -> BezPath {
-    let Value::Fixed(value) = &subpath.vertices.value else {
-        panic!("what is {subpath:?}");
-    };
+fn add_shape_to_path(path: &mut BezPath, shape: &ShapeValue) {
+    if !shape.vertices.is_empty() {
+        path.move_to(shape.vertices[0]);
+    }
+    // See SubPathPen for explanation of coords
+    for i in 0..shape.vertices.len() {
+        let start: Point = shape.vertices[i].into();
 
+        let end: Point = if i + 1 < shape.vertices.len() {
+            shape.vertices[i + 1].into()
+        } else if shape.closed.unwrap_or_default() {
+            shape.vertices[0].into()
+        } else {
+            break;
+        };
+        let c0 = start + shape.out_point[i];
+        let c1 = end + shape.in_point[i];
+
+        path.curve_to(c0, c1, end);
+    }
+
+    if shape.closed.unwrap_or_default() {
+        path.close_path();
+    }
+}
+
+pub(crate) fn bez_for_subpath(subpath: &SubPath) -> BezPath {
     let mut path = BezPath::new();
-    if !value.vertices.is_empty() {
-        path.move_to(value.vertices[0]);
-    }
-    for (start_end, (c0, c1)) in value
-        .vertices
-        .windows(2)
-        .zip(value.in_point.iter().zip(value.out_point.iter()))
-    {
-        let end = start_end[1];
-        path.curve_to(*c0, *c1, end);
-    }
+    match &subpath.vertices.value {
+        Value::Fixed(shape) => add_shape_to_path(&mut path, shape),
+        Value::Animated(value) => {
+            let first_keyframe = value
+                .iter()
+                .reduce(|acc, e| {
+                    if acc.start_time <= e.start_time {
+                        acc
+                    } else {
+                        e
+                    }
+                })
+                .and_then(|sk| sk.start_value.as_ref());
+            if let Some(first_keyframe) = first_keyframe {
+                for shape in first_keyframe.iter() {
+                    add_shape_to_path(&mut path, shape);
+                }
+            }
+        }
+    };
     path
 }
 
@@ -277,6 +439,7 @@ fn bez_for_subpath(subpath: &SubPath) -> BezPath {
 fn subpaths_for_glyph(
     glyph: &OutlineGlyph,
     font_units_to_lottie_units: Affine,
+    location: LocationRef,
 ) -> Result<Vec<(BezPath, SubPath)>, Error> {
     // Fonts draw Y-up, Lottie Y-down. The transform to transition should be negative determinant.
     // Normally a negative determinant flips curve direction but since we're also moving
@@ -288,8 +451,9 @@ fn subpaths_for_glyph(
 
     let mut subpath_pen = SubPathPen::default();
     let mut transform_pen = TransformPen::new(&mut subpath_pen, font_units_to_lottie_units);
+    let settings = DrawSettings::unhinted(Size::unscaled(), location);
     glyph
-        .draw(Size::unscaled(), &mut transform_pen)
+        .draw(settings, &mut transform_pen)
         .map_err(Error::DrawError)?;
 
     Ok(subpath_pen.into_shapes())

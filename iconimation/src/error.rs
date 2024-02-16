@@ -1,4 +1,5 @@
 //! Error types
+use skrifa::GlyphId;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -9,6 +10,8 @@ pub enum Error {
     NoShapesUpdated,
     #[error("No keyframes updated")]
     NoTransformsUpdated,
+    #[error("No outline for {0}")]
+    NoOutline(GlyphId),
 }
 
 #[derive(Debug, Error)]

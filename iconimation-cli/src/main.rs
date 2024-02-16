@@ -1,3 +1,4 @@
+use std::str::FromStr;
 use std::{fs, path::Path};
 
 use bodymovin::Bodymovin as Lottie;
@@ -8,13 +9,14 @@ use iconimation::debug_pen::DebugPen;
 use iconimation::default_template;
 use iconimation::ligate::icon_name_to_gid;
 use iconimation::AndroidSpring;
+use iconimation::GlyphShape;
 use iconimation::Spring;
 use iconimation::Template;
-use kurbo::Point;
-use kurbo::Rect;
+use skrifa::instance::Location;
+use skrifa::raw::types::InvalidTag;
 use skrifa::raw::FontRef;
-use skrifa::raw::TableProvider;
-use skrifa::MetadataProvider;
+use skrifa::{MetadataProvider, Tag};
+use thiserror::Error;
 
 /// Clap-friendly version of [Animation]
 #[derive(ValueEnum, Clone, Debug)]
@@ -27,13 +29,13 @@ pub enum CliAnimation {
 }
 
 impl CliAnimation {
-    fn to_lib(&self) -> Animation {
+    fn to_lib<'a>(&self, shape: &'a GlyphShape) -> Animation<'a> {
         match self {
-            CliAnimation::None => Animation::None,
-            CliAnimation::PulseWhole => Animation::PulseWhole,
-            CliAnimation::PulseParts => Animation::PulseParts,
-            CliAnimation::TwirlWhole => Animation::TwirlWhole,
-            CliAnimation::TwirlParts => Animation::TwirlParts,
+            CliAnimation::None => Animation::None(shape),
+            CliAnimation::PulseWhole => Animation::PulseWhole(shape),
+            CliAnimation::PulseParts => Animation::PulseParts(shape),
+            CliAnimation::TwirlWhole => Animation::TwirlWhole(shape),
+            CliAnimation::TwirlParts => Animation::TwirlParts(shape),
         }
     }
 }
@@ -55,6 +57,14 @@ struct Args {
     #[arg(long)]
     icon: String,
 
+    /// CSV of axis positions in user coords. If unset, the default location. E.g. FILL:0,wght:100
+    #[arg(long)]
+    from: Option<String>,
+
+    /// CSV of axis positions in user coords. If unset, the default location. E.g. FILL:1,wght:700
+    #[arg(long)]
+    to: Option<String>,
+
     #[arg(long)]
     template: Option<String>,
 
@@ -67,16 +77,52 @@ struct Args {
     out_file: String,
 }
 
+#[derive(Debug, Error)]
+pub enum LocationError {
+    #[error("Position must be a csv of tag:value pairs, e.g. FILL:1,wght:100")]
+    InvalidPosition,
+    #[error("Invalid tag '{0}'")]
+    InvalidTag(InvalidTag),
+    #[error("Font does not support tag '{0}'")]
+    NoSuchAxis(Tag),
+    #[error("Unable to parse value of '{0}'")]
+    InvalidValue(Tag),
+    #[error("Value for '{0}' must be in [{1:.2}, {2:.2}]")]
+    OutOfBounds(Tag, f32, f32),
+}
+
+/// Avoid orphan rule
+trait LocationParser {
+    fn parse_location(&self, s: Option<&str>) -> Result<Location, LocationError>;
+}
+
+impl LocationParser for FontRef<'_> {
+    fn parse_location(&self, s: Option<&str>) -> Result<Location, LocationError> {
+        let Some(s) = s else {
+            return Ok(Location::default());
+        };
+        let mut axis_positions = Vec::new();
+        for raw_pos in s.split(',') {
+            let parts: Vec<_> = raw_pos.split(':').collect();
+            if parts.len() != 2 {
+                return Err(LocationError::InvalidPosition);
+            }
+            let tag = Tag::from_str(parts[0]).map_err(LocationError::InvalidTag)?;
+            let value: f32 = parts[1]
+                .parse()
+                .map_err(|_| LocationError::InvalidValue(tag))?;
+            axis_positions.push((tag, value));
+        }
+        Ok(self.axes().location(axis_positions))
+    }
+}
+
 fn main() {
     let args = Args::parse();
 
     let font_file = Path::new(args.font.as_str());
     let font_bytes = fs::read(font_file).unwrap();
     let font = FontRef::new(&font_bytes).unwrap();
-    let upem = font.head().unwrap().units_per_em() as f64;
-    let font_drawbox: Rect = (Point::ZERO, Point::new(upem, upem)).into();
-    eprintln!("font_drawbox {font_drawbox:?}");
-    let outline_loader = font.outline_glyphs();
 
     let gid = if args.icon.starts_with("0x") {
         let codepoint = u32::from_str_radix(&args.icon[2..], 16).unwrap();
@@ -88,13 +134,23 @@ fn main() {
             .unwrap_or_else(|e| panic!("Unable to resolve '{}' to a glyph id: {e}", args.icon))
     };
 
-    let glyph = outline_loader
-        .get(gid)
-        .unwrap_or_else(|| panic!("No outline for {} (gid {gid})", args.icon));
+    let start = font
+        .parse_location(args.from.as_deref())
+        .unwrap_or_else(|e| panic!("Unable to parse --from: {e}"));
+    let end = font
+        .parse_location(args.to.as_deref())
+        .unwrap_or_else(|e| panic!("Unable to parse --to: {e}"));
+
+    let glyph_shape =
+        GlyphShape::new(&font, gid, start, Some(end)).expect("Unable to create replacement");
+    let font_drawbox = glyph_shape.drawbox();
+    eprintln!("font_drawbox {:?}", font_drawbox);
 
     if args.debug {
-        let mut pen = DebugPen::new(Rect::new(0.0, 0.0, upem, upem));
-        glyph
+        let mut pen = DebugPen::new(font_drawbox);
+        font.outline_glyphs()
+            .get(gid)
+            .unwrap_or_else(|| panic!("No glyph for {gid}"))
             .draw(skrifa::instance::Size::unscaled(), &mut pen)
             .unwrap();
         let debug_out = Path::new(&args.out_file).with_extension("svg");
@@ -108,10 +164,8 @@ fn main() {
         default_template(&font_drawbox)
     };
 
-    let animation = args.animation.to_lib();
-    lottie
-        .replace_shape(&font_drawbox, &glyph, animation.animator().as_ref())
-        .expect("Failed to replace shape");
+    let animation = args.animation.to_lib(&glyph_shape);
+    lottie.replace_shape(&animation).expect("Failed to animate");
 
     let spring: Spring = AndroidSpring {
         damping: 0.8,

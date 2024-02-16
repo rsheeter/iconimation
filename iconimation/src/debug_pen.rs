@@ -1,12 +1,13 @@
 //! An [OutlinePen] that generates an svg displaying subpaths.
 
+use bodymovin::shapes::AnyShape;
 use kurbo::{Affine, BezPath, PathEl, Point, Rect, Shape};
 use ordered_float::OrderedFloat;
 use skrifa::outline::OutlinePen;
 use write_fonts::pens::write_to_pen;
 
 use crate::{
-    animate::{a_contained_point, group_icon_parts},
+    animate::{a_contained_point, group_icon_parts, LottieGeometry},
     shape_pen::SubPathPen,
 };
 
@@ -42,9 +43,6 @@ fn draw_annotated(svg: &mut String, y_offset: f64, mut paths: Vec<BezPath>) {
 
     for path in &paths {
         let path_svg = path.to_svg();
-        // if y_offset == 0.0 {
-        //     eprintln!("{}", &path_svg[0..path_svg.find(' ').unwrap()]);
-        // }
 
         let contained = a_contained_point(path);
         let mut filled = 0;
@@ -53,21 +51,9 @@ fn draw_annotated(svg: &mut String, y_offset: f64, mut paths: Vec<BezPath>) {
             for path in &paths {
                 let wind = path.winding(contained);
                 filled += wind;
-                // if y_offset == 0.0 {
-                //     let path = path.to_svg();
-                //     eprintln!(
-                //         "  {} contributes {}",
-                //         &path[0..path.find(' ').unwrap()],
-                //         wind
-                //     );
-                // }
             }
         }
         let filled = filled != 0; // nonzero winding?!
-
-        // if y_offset == 0.0 {
-        //     eprintln!("  filled? {filled}");
-        // }
 
         svg.push_str("  <path opacity=\"33%\" d=\"");
         svg.push_str(&path_svg);
@@ -167,7 +153,9 @@ impl DebugPen {
             .flat_map(|bez| {
                 let mut pen = SubPathPen::default();
                 write_to_pen(bez, &mut pen);
-                pen.into_shapes().into_iter()
+                pen.into_shapes()
+                    .into_iter()
+                    .map(|(_, s)| AnyShape::Shape(s))
             })
             .collect();
         let groups = group_icon_parts(shapes);
@@ -198,7 +186,7 @@ impl DebugPen {
         for (i, group) in groups.iter().enumerate() {
             // group i draws into glyph block i+1
             let y_offset = self.glyph_block.min_y() + (i as f64 + 1.0) * self.glyph_block.height();
-            let paths: Vec<_> = group.iter().map(|(bez, _)| bez.clone()).collect();
+            let paths: Vec<_> = group.iter().map(|shape| shape.to_bez().unwrap()).collect();
             draw_annotated(&mut svg, y_offset, paths);
         }
 
