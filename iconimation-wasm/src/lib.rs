@@ -43,6 +43,8 @@ impl<'a> NameAndVariation<'a> {
     }
 }
 
+type UserLocation = Vec<(Tag, f32)>;
+
 #[derive(Debug, PartialEq)]
 enum Command<'a> {
     None(NameAndVariation<'a>),
@@ -133,7 +135,7 @@ impl Command<'_> {
         }
     }
 
-    fn variation(&self) -> Result<(Vec<(&str, f32)>, Vec<(&str, f32)>), String> {
+    fn variation(&self) -> Result<(UserLocation, UserLocation), String> {
         let nv = match self {
             Command::None(nv, ..)
             | Command::RotateDegrees(nv, ..)
@@ -165,14 +167,14 @@ impl Command<'_> {
     }
 }
 
-fn parse_location<'a>(raw: &'a str) -> Result<Vec<(&str, f32)>, String> {
+fn parse_location(raw: &str) -> Result<UserLocation, String> {
     raw.split(',')
         .map(|kv| {
             let parts = kv.split(':').collect::<Vec<_>>();
             if parts.len() != 2 {
                 return Err("Invalid part".to_string());
             }
-            let tag = parts[0];
+            let tag = Tag::from_str(parts[0]).map_err(|e| format!("Invalid tag string: {e}"))?;
             let value =
                 f32::from_str(parts[1]).map_err(|e| format!("Bad value for '{tag}': {e}"))?;
             Ok((tag, value))
@@ -192,13 +194,20 @@ pub fn generate_lottie(raw_font: &ArrayBuffer, animation: String) -> Result<Stri
     let gid = icon_name_to_gid(&font, command.icon_name())
         .map_err(|e| format!("Unable to determine icon gid {e}"))?;
 
-    let mut lottie = default_template(&font_drawbox);    
+    let mut lottie = default_template(&font_drawbox);
 
     let (raw_from, raw_to) = command.variation()?;
     let from = font.axes().location(&raw_from);
     let to = font.axes().location(&raw_to);
-    
-    lottie.name = Some(format!("{command:?}\n{raw_from:?} location {from:?}\n{raw_to:?} location {to:?}\naxes {}", font.axes().iter().map(|a| a.tag().to_string()).collect::<Vec<_>>().join(", ")));
+
+    lottie.name = Some(format!(
+        "{command:?}\n{raw_from:?} location {from:?}\n{raw_to:?} location {to:?}\naxes {}",
+        font.axes()
+            .iter()
+            .map(|a| a.tag().to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    ));
 
     let glyph_shape = GlyphShape::new(&font, gid, from, Some(to))
         .map_err(|e| format!("Unable to create GlyphShape for {gid}: {e}"))?;
@@ -215,7 +224,7 @@ pub fn generate_lottie(raw_font: &ArrayBuffer, animation: String) -> Result<Stri
 mod tests {
     use crate::{Command, NameAndVariation};
 
-    fn name_only<'a>(icon_name: &'a str) -> NameAndVariation<'a> {
+    fn name_only(icon_name: &str) -> NameAndVariation {
         NameAndVariation {
             icon_name,
             vary_from: None,

@@ -394,12 +394,10 @@ fn add_shape_to_path(path: &mut BezPath, shape: &ShapeValue) {
 
         let end: Point = if i + 1 < shape.vertices.len() {
             shape.vertices[i + 1].into()
+        } else if shape.closed.unwrap_or_default() {
+            shape.vertices[0].into()
         } else {
-            if shape.closed.unwrap_or_default() {
-                shape.vertices[0].into()
-            } else {
-                break;
-            }
+            break;
         };
         let c0 = start + shape.out_point[i];
         let c1 = end + shape.in_point[i];
