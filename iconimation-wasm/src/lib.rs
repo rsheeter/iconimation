@@ -1,20 +1,18 @@
 //! Animate arbitrary icons based on text commands
 
-use std::{str::FromStr, sync::OnceLock};
+use std::{str::FromStr, sync::OnceLock, time::Duration};
 
 use bodymovin::Bodymovin as Lottie;
 use iconimation::{
-    animate::Animation, default_template, ligate::icon_name_to_gid, GlyphSpec, Template, ToLottie,
+    animate::Animation, animated_glyph::AnimatedGlyph,
+    animated_vector_drawable::AndroidVectorDrawable, animator::ToDeliveryFormat,
+    ligate::icon_name_to_gid, spring::Spring, GlyphSpec,
 };
-use kurbo::{Point, Rect};
 use regex::{Captures, Regex};
 
 use js_sys::{ArrayBuffer, Uint8Array};
 use serde::Serialize;
-use skrifa::{
-    raw::{FontRef, TableProvider},
-    MetadataProvider, Tag,
-};
+use skrifa::{raw::FontRef, MetadataProvider, Tag};
 
 use wasm_bindgen::prelude::*;
 
@@ -158,13 +156,13 @@ impl Command<'_> {
         Ok((from, to))
     }
 
-    fn animator<'a>(&self, to_lottie: &'a dyn ToLottie) -> Animation<'a> {
+    fn animation<'a>(&self) -> Animation {
         match self {
-            Command::PulseParts(..) => Animation::PulseParts(to_lottie),
-            Command::PulseWhole(..) => Animation::PulseWhole(to_lottie),
-            Command::TwirlParts(..) => Animation::TwirlParts(to_lottie),
-            Command::TwirlWhole(..) => Animation::TwirlWhole(to_lottie),
-            _ => Animation::None(to_lottie),
+            Command::PulseParts(..) => Animation::PulseParts,
+            Command::PulseWhole(..) => Animation::PulseWhole,
+            Command::TwirlParts(..) => Animation::TwirlParts,
+            Command::TwirlWhole(..) => Animation::TwirlWhole,
+            _ => Animation::None,
         }
     }
 }
@@ -187,7 +185,7 @@ fn parse_location(raw: &str) -> Result<UserLocation, String> {
 #[derive(Serialize)]
 struct Animations {
     lottie: Lottie,
-    avd: String,
+    avd: AndroidVectorDrawable,
     debug: String,
 }
 
@@ -197,13 +195,9 @@ pub fn generate_animation(raw_font: &ArrayBuffer, animation: String) -> Result<S
 
     let rust_buf = Uint8Array::new(raw_font).to_vec();
     let font = FontRef::new(&rust_buf).map_err(|e| format!("FontRef::new failed: {e}"))?;
-    let upem = font.head().unwrap().units_per_em() as f64;
-    let font_drawbox: Rect = (Point::ZERO, Point::new(upem, upem)).into();
 
     let gid = icon_name_to_gid(&font, command.icon_name())
         .map_err(|e| format!("Unable to determine icon gid {e}"))?;
-
-    let mut lottie = default_template(&font_drawbox);
 
     let (raw_from, raw_to) = command.variation()?;
     let from = font.axes().location(&raw_from);
@@ -218,20 +212,27 @@ pub fn generate_animation(raw_font: &ArrayBuffer, animation: String) -> Result<S
             .join(", ")
     );
 
-    let glyph_shape = GlyphSpec::new(&font, gid, from, Some(to))
+    let glyph_spec = GlyphSpec::new(&font, gid, from, Some(to))
         .map_err(|e| format!("Unable to create GlyphShape for {gid}: {e}"))?;
 
-    let animation = command.animator(&glyph_shape);
-    lottie
-        .replace_shape(&animation)
-        .map_err(|e| format!("Unable to animate {gid}: {e}"))?;
+    let duration = Duration::new(1, 0); // 1 second
 
-    Ok(serde_json::to_string_pretty(&Animations {
-        lottie,
-        avd: "TODO".to_string(),
-        debug,
-    })
-    .unwrap())
+    let animator = Box::new(Spring::expressive_spatial());
+
+    let mut animated_glyph: AnimatedGlyph = glyph_spec
+        .try_into()
+        .map_err(|e| format!("Failed to create AnimatedGlyph for {gid}: {e}"))?;
+    command
+        .animation()
+        .apply_to(&mut animated_glyph)
+        .map_err(|e| format!("Failed to animate AnimatedGlyph for {gid}: {e}"))?;
+
+    let lottie = Lottie::generate(&animated_glyph, animator.as_ref(), duration)
+        .expect("Unable to produce Lottie");
+    let avd = AndroidVectorDrawable::generate(&animated_glyph, animator.as_ref(), duration)
+        .expect("Unable to produce AVD");
+
+    Ok(serde_json::to_string_pretty(&Animations { lottie, avd, debug }).unwrap())
 }
 
 #[cfg(test)]

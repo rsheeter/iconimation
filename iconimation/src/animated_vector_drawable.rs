@@ -1,11 +1,24 @@
 //! Converts [`AnimatedGlyph`] to [`AndroidVectorDrawable`]`
 
-struct AndroidVectorDrawable;
+#[derive(Serialize)]
+pub struct AndroidVectorDrawable;
 
-use crate::animated_glyph::AnimatedGlyph;
+use std::time::Duration;
 
-impl From<AnimatedGlyph> for AndroidVectorDrawable {
-    fn from(value: AnimatedGlyph) -> Self {
-        todo!()
+use serde::Serialize;
+
+use crate::{
+    animated_glyph::AnimatedGlyph,
+    animator::{MotionBender, ToDeliveryFormat},
+};
+
+impl ToDeliveryFormat for AndroidVectorDrawable {
+    fn generate(
+        glyph: &AnimatedGlyph,
+        bender: &dyn MotionBender,
+        duration: Duration,
+    ) -> Result<Self, crate::error::ToDeliveryError> {
+        eprintln!("TODO: AVD");
+        Ok(AndroidVectorDrawable)
     }
 }

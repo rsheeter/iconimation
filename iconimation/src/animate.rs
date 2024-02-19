@@ -29,22 +29,26 @@ const TWIRL_SEQUENCE: &[(IntervalPosition, f64)] = &[
 ];
 
 impl Animation {
-    pub fn animate(&self, glyph: &mut AnimatedGlyph) -> Result<(), AnimationError> {
+    pub fn apply_to(&self, glyph: &mut AnimatedGlyph) -> Result<(), AnimationError> {
         match self {
             Animation::None => (),
             Animation::PulseWhole => {
-                glyph.uniform_scale = Some(Animated::new(PULSE_SEQUENCE.to_owned())?)
+                glyph.contents.uniform_scale = Some(Animated::new(PULSE_SEQUENCE.to_owned())?)
             }
             Animation::TwirlWhole => {
-                glyph.uniform_scale = Some(Animated::new(TWIRL_SEQUENCE.to_owned())?)
+                glyph.contents.rotate = Some(Animated::new(TWIRL_SEQUENCE.to_owned())?)
             }
             Animation::PulseParts => {
-                glyph.group_for_piecewise_animation();
-                glyph.uniform_scale = Some(Animated::new(PULSE_SEQUENCE.to_owned())?);
+                glyph.group_for_piecewise_animation()?;
+                for group in glyph.leaf_groups_mut() {
+                    group.uniform_scale = Some(Animated::new(PULSE_SEQUENCE.to_owned())?);
+                }
             }
             Animation::TwirlParts => {
-                glyph.group_for_piecewise_animation();
-                glyph.uniform_scale = Some(Animated::new(TWIRL_SEQUENCE.to_owned())?);
+                glyph.group_for_piecewise_animation()?;
+                for group in glyph.leaf_groups_mut() {
+                    group.rotate = Some(Animated::new(TWIRL_SEQUENCE.to_owned())?);
+                }
             }
         }
         Ok(())

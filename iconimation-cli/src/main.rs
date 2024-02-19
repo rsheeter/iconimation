@@ -1,17 +1,17 @@
 use std::str::FromStr;
+use std::time::Duration;
 use std::{fs, path::Path};
 
 use bodymovin::Bodymovin as Lottie;
 use clap::Parser;
 use clap::ValueEnum;
 use iconimation::animate::Animation;
+use iconimation::animated_glyph::AnimatedGlyph;
+use iconimation::animator::{LinearAnimator, MotionBender, ToDeliveryFormat};
 use iconimation::debug_pen::DebugPen;
-use iconimation::default_template;
 use iconimation::ligate::icon_name_to_gid;
-use iconimation::AndroidSpring;
+use iconimation::spring::Spring;
 use iconimation::GlyphSpec;
-use iconimation::Spring;
-use iconimation::Template;
 use skrifa::instance::Location;
 use skrifa::raw::types::InvalidTag;
 use skrifa::raw::FontRef;
@@ -141,9 +141,9 @@ fn main() {
         .parse_location(args.to.as_deref())
         .unwrap_or_else(|e| panic!("Unable to parse --to: {e}"));
 
-    let glyph_shape =
+    let glyph_spec =
         GlyphSpec::new(&font, gid, start, Some(end)).expect("Unable to create replacement");
-    let font_drawbox = glyph_shape.drawbox();
+    let font_drawbox = glyph_spec.drawbox();
     eprintln!("font_drawbox {:?}", font_drawbox);
 
     if args.debug {
@@ -158,27 +158,23 @@ fn main() {
         eprintln!("Wrote debug svg {}", args.out_file);
     }
 
-    let mut lottie = if let Some(template) = args.template {
-        Lottie::load(template).expect("Unable to load custom template")
+    let duration = Duration::new(1, 0); // 1 second
+
+    let animator: Box<dyn MotionBender> = if args.spring {
+        Box::new(Spring::expressive_spatial())
     } else {
-        default_template(&font_drawbox)
+        Box::new(LinearAnimator::new())
     };
 
-    let animation = args.animation.to_lib();
-    lottie.replace_shape(&animation).expect("Failed to animate");
-
-    let spring: Spring = AndroidSpring {
-        damping: 0.8,
-        stiffness: 380.0,
-        ..Default::default()
-    }
-    .into();
-
-    if args.spring {
-        lottie
-            .spring(spring)
-            .expect("Failed to apply spring-based animation");
-    }
+    let mut animated_glyph: AnimatedGlyph = glyph_spec
+        .try_into()
+        .expect("Unable to create animated glyph");
+    args.animation
+        .to_lib()
+        .apply_to(&mut animated_glyph)
+        .expect("Unable to animate");
+    let lottie: Lottie = Lottie::generate(&animated_glyph, animator.as_ref(), duration)
+        .expect("Unable to produce Lottie");
 
     fs::write(
         &args.out_file,

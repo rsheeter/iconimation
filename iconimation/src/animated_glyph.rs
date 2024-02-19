@@ -9,30 +9,42 @@ use skrifa::{
 
 use crate::{
     a_contained_point,
-    animator::{Animated, Animator, IntervalPosition},
+    animator::{Animated, IntervalPosition},
     error::AnimationError,
     path_commands,
     shape_pen::SubPathPen,
     GlyphSpec,
 };
 
-/// An animated glyph, as yet in no particular output format and with no specific motion curve
+/// An animated glyph in no particular output format and with no specific motion curve
 ///
 /// Meant to support simple animation patterns that are applicable to all icons such as changing
 /// position in designspace over time.
 #[derive(Debug, Clone)]
 pub struct AnimatedGlyph {
-    font_drawbox: Rect,
-
-    pub rotate: Option<Animated<f64>>,
-    pub uniform_scale: Option<Animated<f64>>,
+    pub font_drawbox: Rect,
 
     /// Groups paths that should be animated together
     ///
     /// By default, only one entry with all the paths. Call
     /// group_icon_parts to break apart groups.
-    paths: Vec<Vec<Animated<BezPath>>>,
+    pub contents: Group,
     grouped: bool,
+}
+
+#[derive(Debug, Clone)]
+pub enum Element {
+    /// Some formats (Android Vector Drawable) prefer to animate groups over paths
+    /// so we put animated transformation on group only
+    Group(Group),
+    Path(Animated<BezPath>),
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct Group {
+    pub rotate: Option<Animated<f64>>,
+    pub uniform_scale: Option<Animated<f64>>,
+    pub children: Vec<Element>,
 }
 
 fn paths_at(glyph_spec: &GlyphSpec<'_>, location: LocationRef) -> Result<Vec<BezPath>, DrawError> {
@@ -50,7 +62,7 @@ impl TryFrom<GlyphSpec<'_>> for AnimatedGlyph {
             paths_at(&glyph_spec, (&glyph_spec.start).into()).map_err(Self::Error::DrawError)?;
 
         // Maybe there is an ending outline, and if there is there might be intermediary stops too
-        let paths = if let Some(end_loc) = glyph_spec.end.as_ref() {
+        let paths: Vec<_> = if let Some(end_loc) = glyph_spec.end.as_ref() {
             let end_paths =
                 paths_at(&glyph_spec, end_loc.into()).map_err(Self::Error::DrawError)?;
 
@@ -92,18 +104,58 @@ impl TryFrom<GlyphSpec<'_>> for AnimatedGlyph {
                 .collect()
         };
 
+        let contents = Group {
+            children: paths.into_iter().map(|p| Element::Path(p)).collect(),
+            ..Default::default()
+        };
+
         Ok(Self {
             font_drawbox: glyph_spec.drawbox(),
-            rotate: None,
-            uniform_scale: None,
-            paths: vec![paths],
+            contents,
             grouped: false,
         })
     }
 }
 
+struct LeafGroupIter<'a> {
+    frontier: Vec<&'a mut Group>,
+}
+
+impl<'a> Iterator for LeafGroupIter<'a> {
+    type Item = &'a mut Group;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while let Some(next) = self.frontier.pop() {
+            if next.children.iter().all(|c| matches!(c, Element::Path(..))) {
+                return Some(next);
+            }
+            self.frontier
+                .extend(next.children.iter_mut().filter_map(|c| match c {
+                    Element::Group(g) => Some(g),
+                    Element::Path(..) => None,
+                }));
+        }
+        None
+    }
+}
+
 impl AnimatedGlyph {
-    /// Piece-wise animation wants to animate "parts" as the eye perceives them; try to so group
+    /// Walk across the leafmost groups.
+    ///
+    /// Intended use is to first [`group_for_piecewise_animation`] then walk leaf
+    /// groups to apply animation that should be piece by piece.
+    pub fn leaf_groups_mut<'a>(&'a mut self) -> impl Iterator<Item = &'a mut Group> {
+        LeafGroupIter {
+            frontier: vec![&mut self.contents],
+        }
+    }
+
+    /// The root group, to which global transformation like spinning the whole glyph, could be applied.
+
+    /// Piece-wise animation wants to animate "parts" as the eye perceives them; try to so group.
+    ///
+    /// The glyph must have one group containing only paths, if not the grouping fails. Upon successful
+    /// completion the glyph contents will be a Group of Group of Paths.
     ///
     /// Most importantly, if we have a shape and hole(s) cut out of it they should be together.
     ///
@@ -117,16 +169,20 @@ impl AnimatedGlyph {
     /// winding is nonzero.
     ///
     /// We do all the grouping on the initial state of animated paths.
-    pub fn group_for_piecewise_animation(&mut self) {
+    pub fn group_for_piecewise_animation(&mut self) -> Result<(), AnimationError> {
         // nop if already done
         if self.grouped {
-            return;
+            return Ok(());
         }
-        assert!(
-            self.paths.len() == 1,
-            "If we have not grouped we should have one group"
-        );
-        let paths = self.paths.remove(0);
+
+        let paths: Vec<_> = std::mem::take(&mut self.contents)
+            .children
+            .into_iter()
+            .map(|e| match e {
+                Element::Path(p) => Ok(p),
+                Element::Group { .. } => Err(AnimationError::NotAGroupOfPaths),
+            })
+            .collect::<Result<_, _>>()?;
 
         // Figure out what is/isn't filled
         let filled: Vec<_> = paths
@@ -184,7 +240,19 @@ impl AnimatedGlyph {
             }
         }
 
-        self.paths = grouped_paths;
+        self.contents = Group {
+            children: grouped_paths
+                .into_iter()
+                .map(|paths| {
+                    Element::Group(Group {
+                        children: paths.into_iter().map(|p| Element::Path(p)).collect(),
+                        ..Default::default()
+                    })
+                })
+                .collect(),
+            ..Default::default()
+        };
         self.grouped = true;
+        Ok(())
     }
 }

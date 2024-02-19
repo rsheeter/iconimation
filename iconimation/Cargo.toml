@@ -9,6 +9,7 @@ edition = "2021"
 kurbo.workspace = true
 skrifa.workspace = true
 bodymovin.workspace = true
+serde.workspace = true
 
 write-fonts = "0.21.0"  # pens
 

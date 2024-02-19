@@ -1,6 +1,6 @@
 //! Spring-based animation, ported from [Android's implmentation](https://cs.android.com/android/platform/superproject/main/+/main:frameworks/base/core/java/com/android/internal/dynamicanimation/animation/)
 
-use crate::error::SpringBuildError;
+use crate::{animator::MotionBender, error::SpringBuildError};
 
 #[derive(Debug, Copy, Clone)]
 pub enum Spring {
@@ -194,6 +194,12 @@ impl AnimatedValueType {
             value_threshold,
             velocity_threshold,
         }
+    }
+}
+
+impl MotionBender for Spring {
+    fn animate_between(&self, start_value: f64, end_value: f64) -> crate::animator::MotionCurve {
+        todo!()
     }
 }
 

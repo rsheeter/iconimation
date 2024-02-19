@@ -1,10 +1,13 @@
 //! Describes programmatic animators, produces of motion curves for transitions between values
 
-use std::fmt::Debug;
+use std::{fmt::Debug, time::Duration};
 
 use ordered_float::OrderedFloat;
 
-use crate::error::AnimationError;
+use crate::{
+    animated_glyph::AnimatedGlyph,
+    error::{AnimationError, ToDeliveryError},
+};
 
 /// Fraction progress within an interval.
 ///
@@ -73,10 +76,16 @@ impl<T> Animated<T> {
     pub fn first(&self) -> &T {
         &self.0.first().unwrap().1
     }
+
+    pub fn iter(&self) -> impl Iterator<Item = &(IntervalPosition, T)> {
+        self.0.iter()
+    }
 }
 
 /// A producer of motion (value over time) curves
-pub trait Animator: Debug {
+///
+/// Named in honor of ATLA and ofc Futurama
+pub trait MotionBender: Debug {
     /// Produces cubic(s) describing the path between (0, start_value) and (1, end_value)
     ///
     /// Start/end value are the animated property. X-value is time expressed as progression
@@ -92,7 +101,13 @@ pub trait Animatable {
 #[derive(Debug, Clone)]
 pub struct LinearAnimator;
 
-impl Animator for LinearAnimator {
+impl LinearAnimator {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl MotionBender for LinearAnimator {
     fn animate_between(&self, start_value: f64, end_value: f64) -> MotionCurve {
         let start = (IntervalPosition::START, start_value);
         let end = (IntervalPosition::END, end_value);
@@ -105,4 +120,18 @@ impl Animator for LinearAnimator {
             }],
         }
     }
+}
+
+/// Implement to convert abstracted animation into an end user (developer) deliver format.
+///
+/// For example, this would be implemented for Lottie, AndroidVectorDrawable, and possibly Web.
+pub trait ToDeliveryFormat
+where
+    Self: Sized,
+{
+    fn generate(
+        glyph: &AnimatedGlyph,
+        bender: &dyn MotionBender,
+        duration: Duration,
+    ) -> Result<Self, ToDeliveryError>;
 }

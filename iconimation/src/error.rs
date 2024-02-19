@@ -40,4 +40,12 @@ pub enum AnimationError {
     NoKeyframes,
     #[error("Multiple keyframes at the same time")]
     DuplicateKeyframes,
+    #[error("The glyph is not a simple group containing only paths")]
+    NotAGroupOfPaths,
+}
+
+#[derive(Debug, Error)]
+pub enum ToDeliveryError {
+    #[error("Unable to convert to Lottie paths, {0}")]
+    PathConversionError(Error),
 }

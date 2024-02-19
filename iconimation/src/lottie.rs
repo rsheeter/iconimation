@@ -1,17 +1,138 @@
 //! Converts [`AnimatedGlyph`] to [`Lottie`]`
 
+use std::time::Duration;
+
 use bodymovin::{
-    properties::{ShapeValue, Value},
-    shapes::{AnyShape, SubPath},
+    helpers::Transform,
+    layers::{AnyLayer, Shape as ShapeLayer, ShapeMixin},
+    properties::{Property, ShapeValue, SplittableMultiDimensional, Value},
+    shapes::{AnyShape, Group as LottieGroup, SubPath, Transform as ShapeTransform},
     Bodymovin as Lottie,
 };
-use kurbo::{BezPath, Point, Rect, Shape};
+use kurbo::{Affine, BezPath, Point, Rect, Shape};
+use write_fonts::pens::{write_to_pen, TransformPen};
 
-use crate::{animated_glyph::AnimatedGlyph, error::Error};
+use crate::{
+    animated_glyph::{AnimatedGlyph, Element, Group},
+    animator::{Animated, MotionBender, ToDeliveryFormat},
+    error::{AnimationError, Error, ToDeliveryError},
+    shape_pen::{bez_to_shape, SubPathPen},
+};
 
-impl From<AnimatedGlyph> for Lottie {
-    fn from(value: AnimatedGlyph) -> Self {
+/// Returns a [SubPath] in Lottie units for each subpath of a glyph
+fn subpaths_for_glyph(
+    path: &BezPath,
+    font_units_to_lottie_units: Affine,
+) -> Result<Vec<SubPath>, Error> {
+    let mut subpath_pen = SubPathPen::default();
+    let mut transform_pen = TransformPen::new(&mut subpath_pen, font_units_to_lottie_units);
+
+    write_to_pen(path, &mut transform_pen);
+
+    Ok(subpath_pen.paths().iter().map(bez_to_shape).collect())
+}
+
+struct LottieWriter<'a> {
+    frame_rate: f64,
+    font_to_lottie: Affine,
+    bender: &'a dyn MotionBender,
+    duration: Duration,
+}
+
+impl<'a> LottieWriter<'a> {
+    fn new(font_box: Rect, bender: &'a dyn MotionBender, duration: Duration) -> Self {
+        // Simplified version of [Affine2D::rect_to_rect](https://github.com/googlefonts/picosvg/blob/a0bcfade7a60cbd6f47d8bfe65b6d471cee628c0/src/picosvg/svg_transform.py#L216-L263)
+        let font_to_lottie = Affine::IDENTITY
+            // Move the font box to touch the origin
+            .then_translate((-font_box.min_x(), -font_box.min_y()).into())
+            // Do a flip!
+            .then_scale_non_uniform(1.0, -1.0);
+        Self {
+            frame_rate: 60.0,
+            font_to_lottie,
+            bender,
+            duration,
+        }
+    }
+
+    fn create_group(&self, group: &Group) -> Result<LottieGroup, crate::error::ToDeliveryError> {
+        let mut items: Vec<_> = group
+            .children
+            .iter()
+            .map(|c| match c {
+                Element::Group(g) => self.create_group(g).map(|g| AnyShape::Group(g)),
+                Element::Path(p) => self.create_path(p).map(|p| AnyShape::Shape(p)),
+            })
+            .collect::<Result<_, _>>()?;
+
+        let transform = ShapeTransform::default();
+        if group.rotate.is_some() {
+            todo!("rotate")
+        }
+        if group.uniform_scale.is_some() {
+            todo!("uniform scale")
+        }
+
+        // de facto standard is shape(s), fill, transform
+        items.push(AnyShape::Fill(Default::default()));
+        items.push(AnyShape::Transform(transform));
+        Ok(LottieGroup {
+            items,
+            ..Default::default()
+        })
+    }
+
+    fn create_path(
+        &self,
+        path: &Animated<BezPath>,
+    ) -> Result<SubPath, crate::error::ToDeliveryError> {
+        let subpaths: Vec<_> = path
+            .iter()
+            .map(|(t, p)| {
+                subpaths_for_glyph(&p, self.font_to_lottie).map(|subpaths| (*t, subpaths))
+            })
+            .collect::<Result<_, _>>()
+            .map_err(ToDeliveryError::PathConversionError)?;
         todo!()
+    }
+}
+
+impl ToDeliveryFormat for Lottie {
+    fn generate(
+        glyph: &AnimatedGlyph,
+        bender: &dyn MotionBender,
+        duration: Duration,
+    ) -> Result<Self, crate::error::ToDeliveryError> {
+        let writer = LottieWriter::new(glyph.font_drawbox, bender, duration);
+        let group = writer.create_group(&glyph.contents)?;
+        let lottie = Lottie {
+            in_point: 0.0,
+            out_point: duration.as_secs_f64() * writer.frame_rate,
+            frame_rate: writer.frame_rate,
+            width: glyph.font_drawbox.width() as i64,
+            height: glyph.font_drawbox.height() as i64,
+            layers: vec![AnyLayer::Shape(ShapeLayer {
+                in_point: 0.0,
+                out_point: duration.as_secs_f64() * writer.frame_rate,
+                transform: Transform {
+                    position: SplittableMultiDimensional::Uniform(Property {
+                        value: Value::Fixed(vec![
+                            glyph.font_drawbox.width() / 2.0,
+                            glyph.font_drawbox.height() / 2.0,
+                        ]),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                mixin: ShapeMixin {
+                    shapes: vec![AnyShape::Group(group)],
+                    ..Default::default()
+                },
+                ..Default::default()
+            })],
+            ..Default::default()
+        };
+        Ok(lottie)
     }
 }
 

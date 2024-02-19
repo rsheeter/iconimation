@@ -109,7 +109,7 @@ fn add_cubic(shape: &mut ShapeValue, c0: Point, c1: Point, end: Point) {
     shape.vertices.push(end.into());
 }
 
-fn bez_to_shape(path: &BezPath) -> SubPath {
+pub fn bez_to_shape(path: &BezPath) -> SubPath {
     // eprintln!("bez to shape, cbox {:?}", path.control_box());
 
     let mut value = ShapeValue::default();
