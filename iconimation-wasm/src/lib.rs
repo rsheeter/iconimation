@@ -4,7 +4,7 @@ use std::{str::FromStr, sync::OnceLock};
 
 use bodymovin::Bodymovin as Lottie;
 use iconimation::{
-    animate::Animation, default_template, ligate::icon_name_to_gid, GlyphShape, Template, ToLottie,
+    animate::Animation, default_template, ligate::icon_name_to_gid, GlyphSpec, Template, ToLottie,
 };
 use kurbo::{Point, Rect};
 use regex::{Captures, Regex};
@@ -218,7 +218,7 @@ pub fn generate_animation(raw_font: &ArrayBuffer, animation: String) -> Result<S
             .join(", ")
     );
 
-    let glyph_shape = GlyphShape::new(&font, gid, from, Some(to))
+    let glyph_shape = GlyphSpec::new(&font, gid, from, Some(to))
         .map_err(|e| format!("Unable to create GlyphShape for {gid}: {e}"))?;
 
     let animation = command.animator(&glyph_shape);

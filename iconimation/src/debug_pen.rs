@@ -6,10 +6,7 @@ use ordered_float::OrderedFloat;
 use skrifa::outline::OutlinePen;
 use write_fonts::pens::write_to_pen;
 
-use crate::{
-    animate::{a_contained_point, group_icon_parts, LottieGeometry},
-    shape_pen::SubPathPen,
-};
+use crate::{a_contained_point, lottie::LottieGeometry, shape_pen::SubPathPen};
 
 pub struct DebugPen {
     glyph_block: Rect,
@@ -148,7 +145,7 @@ impl DebugPen {
             })
             .collect();
 
-        let shapes = paths
+        let shapes: Vec<_> = paths
             .iter()
             .flat_map(|bez| {
                 let mut pen = SubPathPen::default();
@@ -158,7 +155,8 @@ impl DebugPen {
                     .map(|(_, s)| AnyShape::Shape(s))
             })
             .collect();
-        let groups = group_icon_parts(shapes);
+        //let groups = group_icon_parts(shapes);
+        let groups = vec![shapes];
 
         // We need one glyph block for the annotated svg plus one per group, vertically
         let viewbox = Rect::new(

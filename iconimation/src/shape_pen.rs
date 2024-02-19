@@ -22,6 +22,10 @@ impl SubPathPen {
         return self.paths.last_mut().unwrap();
     }
 
+    pub fn paths(self) -> Vec<BezPath> {
+        self.paths
+    }
+
     pub fn into_shapes(self) -> Vec<(BezPath, SubPath)> {
         self.paths
             .into_iter()

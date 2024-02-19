@@ -9,7 +9,7 @@ use iconimation::debug_pen::DebugPen;
 use iconimation::default_template;
 use iconimation::ligate::icon_name_to_gid;
 use iconimation::AndroidSpring;
-use iconimation::GlyphShape;
+use iconimation::GlyphSpec;
 use iconimation::Spring;
 use iconimation::Template;
 use skrifa::instance::Location;
@@ -29,13 +29,13 @@ pub enum CliAnimation {
 }
 
 impl CliAnimation {
-    fn to_lib<'a>(&self, shape: &'a GlyphShape) -> Animation<'a> {
+    fn to_lib<'a>(&self) -> Animation {
         match self {
-            CliAnimation::None => Animation::None(shape),
-            CliAnimation::PulseWhole => Animation::PulseWhole(shape),
-            CliAnimation::PulseParts => Animation::PulseParts(shape),
-            CliAnimation::TwirlWhole => Animation::TwirlWhole(shape),
-            CliAnimation::TwirlParts => Animation::TwirlParts(shape),
+            CliAnimation::None => Animation::None,
+            CliAnimation::PulseWhole => Animation::PulseWhole,
+            CliAnimation::PulseParts => Animation::PulseParts,
+            CliAnimation::TwirlWhole => Animation::TwirlWhole,
+            CliAnimation::TwirlParts => Animation::TwirlParts,
         }
     }
 }
@@ -142,7 +142,7 @@ fn main() {
         .unwrap_or_else(|e| panic!("Unable to parse --to: {e}"));
 
     let glyph_shape =
-        GlyphShape::new(&font, gid, start, Some(end)).expect("Unable to create replacement");
+        GlyphSpec::new(&font, gid, start, Some(end)).expect("Unable to create replacement");
     let font_drawbox = glyph_shape.drawbox();
     eprintln!("font_drawbox {:?}", font_drawbox);
 
@@ -164,7 +164,7 @@ fn main() {
         default_template(&font_drawbox)
     };
 
-    let animation = args.animation.to_lib(&glyph_shape);
+    let animation = args.animation.to_lib();
     lottie.replace_shape(&animation).expect("Failed to animate");
 
     let spring: Spring = AndroidSpring {

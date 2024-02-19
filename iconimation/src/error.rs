@@ -31,3 +31,13 @@ pub enum IconNameError {
     #[error("The icon name '{0}' has no ligature")]
     NoLigature(String),
 }
+
+#[derive(Debug, Error)]
+pub enum AnimationError {
+    #[error("Unable to draw: {0}")]
+    DrawError(skrifa::outline::DrawError),
+    #[error("0 keyframes makes for a dull animated value")]
+    NoKeyframes,
+    #[error("Multiple keyframes at the same time")]
+    DuplicateKeyframes,
+}

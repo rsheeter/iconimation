@@ -1,9 +1,13 @@
 //! Shove glyphs from a variable font into a Lottie template.
 
 pub mod animate;
+pub mod animated_glyph;
+pub mod animated_vector_drawable;
+pub mod animator;
 pub mod debug_pen;
 pub mod error;
 pub mod ligate;
+pub mod lottie;
 mod shape_pen;
 pub mod spring;
 
@@ -20,7 +24,7 @@ use bodymovin::{
     sources::Asset,
     Bodymovin as Lottie,
 };
-use kurbo::{Affine, BezPath, PathEl, Point, Rect};
+use kurbo::{Affine, BezPath, PathEl, Point, Rect, Shape, Vec2};
 use ordered_float::OrderedFloat;
 use skrifa::{
     instance::{Location, LocationRef, Size},
@@ -31,6 +35,24 @@ use skrifa::{
 use write_fonts::pens::TransformPen;
 
 use crate::{error::Error, shape_pen::SubPathPen};
+
+/// Find a point that is contained within the subpath
+///
+/// Meant for simplified (assume the answer is the same for the entire subpath) nonzero fill resolution.
+pub fn a_contained_point(subpath: &BezPath) -> Option<Point> {
+    let Some(PathEl::MoveTo(p)) = subpath.elements().first() else {
+        eprintln!("Subpath doesn't start with a move!");
+        return None;
+    };
+
+    // our shapes are simple, just bet that a nearby point is contained
+    let offsets = [0.0, 0.001, -0.001];
+    offsets
+        .iter()
+        .flat_map(|x_off| offsets.iter().map(|y_off| Vec2::new(*x_off, *y_off)))
+        .map(|offset| *p + offset)
+        .find(|p| subpath.contains(*p))
+}
 
 pub fn default_template(font_drawbox: &Rect) -> Lottie {
     Lottie {
@@ -89,7 +111,7 @@ pub trait ToLottie: Debug {
     fn create(&self, start: f64, end: f64, dest_box: Rect) -> Result<Vec<AnyShape>, Error>;
 }
 
-pub struct GlyphShape<'a> {
+pub struct GlyphSpec<'a> {
     font: &'a FontRef<'a>,
     glyph: OutlineGlyph<'a>,
     gid: GlyphId,
@@ -98,7 +120,7 @@ pub struct GlyphShape<'a> {
     end: Option<Location>,
 }
 
-impl<'a> Debug for GlyphShape<'a> {
+impl<'a> Debug for GlyphSpec<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("GlyphShape")
             .field("gid", &self.gid)
@@ -106,7 +128,7 @@ impl<'a> Debug for GlyphShape<'a> {
     }
 }
 
-impl<'a> GlyphShape<'a> {
+impl<'a> GlyphSpec<'a> {
     pub fn new(
         font: &'a FontRef<'a>,
         gid: GlyphId,
@@ -137,7 +159,7 @@ impl<'a> GlyphShape<'a> {
     }
 }
 
-fn path_commands(bez: &BezPath) -> String {
+pub fn path_commands(bez: &BezPath) -> String {
     bez.elements()
         .iter()
         .map(|e| match e {
@@ -150,7 +172,7 @@ fn path_commands(bez: &BezPath) -> String {
         .collect()
 }
 
-impl<'a> ToLottie for GlyphShape<'a> {
+impl<'a> ToLottie for GlyphSpec<'a> {
     fn create(&self, start: f64, end: f64, dest_box: Rect) -> Result<Vec<AnyShape>, Error> {
         let transform = rect_to_rect(self.drawbox(), dest_box);
 
