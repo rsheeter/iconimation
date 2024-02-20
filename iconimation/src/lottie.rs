@@ -3,9 +3,11 @@
 use std::time::Duration;
 
 use bodymovin::{
-    helpers::Transform,
     layers::{AnyLayer, Shape as ShapeLayer, ShapeMixin},
-    properties::{Property, ShapeValue, SplittableMultiDimensional, Value},
+    properties::{
+        Bezier2d, BezierEase, ControlPoint2d, MultiDimensionalKeyframe, Property, ShapeKeyframe,
+        ShapeValue, Value,
+    },
     shapes::{AnyShape, Group as LottieGroup, SubPath, Transform as ShapeTransform},
     Bodymovin as Lottie,
 };
@@ -14,8 +16,9 @@ use write_fonts::pens::{write_to_pen, TransformPen};
 
 use crate::{
     animated_glyph::{AnimatedGlyph, Element, Group},
-    animator::{Animated, MotionBender, ToDeliveryFormat},
-    error::{AnimationError, Error, ToDeliveryError},
+    animator::{Animated, IntervalPosition, MotionBender, ToDeliveryFormat},
+    error::{Error, ToDeliveryError},
+    path_commands,
     shape_pen::{bez_to_shape, SubPathPen},
 };
 
@@ -35,6 +38,7 @@ fn subpaths_for_glyph(
 struct LottieWriter<'a> {
     frame_rate: f64,
     font_to_lottie: Affine,
+    lottie_center: [f64; 2],
     bender: &'a dyn MotionBender,
     duration: Duration,
 }
@@ -45,11 +49,15 @@ impl<'a> LottieWriter<'a> {
         let font_to_lottie = Affine::IDENTITY
             // Move the font box to touch the origin
             .then_translate((-font_box.min_x(), -font_box.min_y()).into())
-            // Do a flip!
-            .then_scale_non_uniform(1.0, -1.0);
+            // Do a flip to correct for font being Y-up, Lottie Y-down
+            .then_scale_non_uniform(1.0, -1.0)
+            // Move into the viewbox
+            .then_translate((0.0, font_box.height()).into());
+
         Self {
             frame_rate: 60.0,
             font_to_lottie,
+            lottie_center: [font_box.width() / 2.0, font_box.height() / 2.0],
             bender,
             duration,
         }
@@ -59,15 +67,44 @@ impl<'a> LottieWriter<'a> {
         let mut items: Vec<_> = group
             .children
             .iter()
-            .map(|c| match c {
-                Element::Group(g) => self.create_group(g).map(|g| AnyShape::Group(g)),
-                Element::Path(p) => self.create_path(p).map(|p| AnyShape::Shape(p)),
+            .flat_map(|c| {
+                let items = match c {
+                    Element::Group(g) => self.create_group(g).map(|g| vec![AnyShape::Group(g)]),
+                    Element::Path(p) => self
+                        .create_subpaths(p)
+                        .map(|p| p.into_iter().map(|p| AnyShape::Shape(p)).collect()),
+                };
+                match items {
+                    Ok(vec) => vec.into_iter().map(|s| Ok(s)).collect(),
+                    Err(e) => vec![Err(e)],
+                }
             })
             .collect::<Result<_, _>>()?;
 
-        let transform = ShapeTransform::default();
-        if group.rotate.is_some() {
-            todo!("rotate")
+        // Animate relative to the center of the shape(s)
+        // https://lottiefiles.github.io/lottie-docs/concepts/#transform
+        // notes that anchor and position need to match for this
+        let center = Property {
+            value: Value::Fixed(self.lottie_center.to_vec()),
+            ..Default::default()
+        };
+        let mut transform = ShapeTransform {
+            anchor_point: center.clone(),
+            position: center.clone(),
+            ..Default::default()
+        };
+        if let Some(rotate) = group.rotate.as_ref() {
+            if rotate.is_animated() {
+                transform.rotation.animated = 1;
+                transform.rotation.value = Value::Animated(
+                    rotate
+                        .iter()
+                        .map(|(pos, value)| self.create_simple_keyframe(*pos, vec![*value]))
+                        .collect(),
+                );
+            } else {
+                transform.rotation.value = Value::Fixed(*rotate.first());
+            }
         }
         if group.uniform_scale.is_some() {
             todo!("uniform scale")
@@ -82,18 +119,95 @@ impl<'a> LottieWriter<'a> {
         })
     }
 
-    fn create_path(
+    // https://lottiefiles.github.io/lottie-docs/playground/json_editor/ doesn't play if there is no ease
+    // TODO: use the motion curve
+    fn default_ease(&self) -> BezierEase {
+        BezierEase::_2D(Bezier2d {
+            in_value: ControlPoint2d { x: 0.6, y: 1.0 },
+            out_value: ControlPoint2d { x: 0.4, y: 0.0 },
+        })
+    }
+
+    fn create_simple_keyframe(
+        &self,
+        pos: IntervalPosition,
+        value: Vec<f64>,
+    ) -> MultiDimensionalKeyframe {
+        MultiDimensionalKeyframe {
+            start_time: self.frame_rate * self.duration.as_secs_f64() * pos.into_inner(),
+            start_value: Some(value),
+            bezier: Some(self.default_ease()),
+            ..Default::default()
+        }
+    }
+
+    fn create_path_frame(&self, pos: IntervalPosition, value: ShapeValue) -> ShapeKeyframe {
+        ShapeKeyframe {
+            start_time: self.frame_rate * self.duration.as_secs_f64() * pos.into_inner(),
+            start_value: Some(vec![value]),
+            bezier: Some(self.default_ease()),
+            ..Default::default()
+        }
+    }
+
+    fn create_subpaths(
         &self,
         path: &Animated<BezPath>,
-    ) -> Result<SubPath, crate::error::ToDeliveryError> {
-        let subpaths: Vec<_> = path
+    ) -> Result<Vec<SubPath>, crate::error::ToDeliveryError> {
+        // Interpolation compatible paths?
+        // TODO: figure out when to swap when *not* compatible, e.g. for singlesub at FILL>=0.99
+        if path.len() > 1 {
+            let cmd_seq = path_commands(path.first());
+            for (pos, path) in path.iter().skip(1) {
+                let cmds = path_commands(path);
+                if cmd_seq != cmds {
+                    return Err(ToDeliveryError::IncompatiblePath(*pos));
+                }
+            }
+        }
+
+        let mut subpaths: Vec<_> = path
             .iter()
             .map(|(t, p)| {
                 subpaths_for_glyph(&p, self.font_to_lottie).map(|subpaths| (*t, subpaths))
             })
             .collect::<Result<_, _>>()
             .map_err(ToDeliveryError::PathConversionError)?;
-        todo!()
+
+        let (start_pos, mut start_subpaths) = subpaths.pop().unwrap(); // animated must have an entry
+
+        // Create keyframes for animated subpaths
+        // At each timeslot we can have many subpaths. They don't necessarily all animate.
+        let animated_indices: Vec<_> = (0..start_subpaths.len())
+            .filter(|i| {
+                let start_path = &start_subpaths[*i];
+                subpaths.iter().any(|(_, paths)| *start_path != paths[*i])
+            })
+            .collect();
+
+        for i in animated_indices {
+            let start_path = start_subpaths.get_mut(i).unwrap();
+            let Value::Fixed(start_value) = &start_path.vertices.value else {
+                return Err(ToDeliveryError::UnexpectedAnimation(start_pos));
+            };
+
+            let mut keyframes = Vec::with_capacity(subpaths.len() + 1);
+            keyframes.push(self.create_path_frame(start_pos, start_value.clone()));
+            for (pos, value) in subpaths
+                .iter()
+                .map(|(pos, paths)| (*pos, paths.get(i).unwrap()))
+            {
+                let Value::Fixed(value) = &value.vertices.value else {
+                    return Err(ToDeliveryError::UnexpectedAnimation(pos));
+                };
+                keyframes.push(self.create_path_frame(pos, value.clone()));
+            }
+
+            start_path.vertices.animated = 1;
+            start_path.vertices.value = Value::Animated(keyframes);
+        }
+
+        Ok(start_subpaths)
     }
 }
 
@@ -114,16 +228,6 @@ impl ToDeliveryFormat for Lottie {
             layers: vec![AnyLayer::Shape(ShapeLayer {
                 in_point: 0.0,
                 out_point: duration.as_secs_f64() * writer.frame_rate,
-                transform: Transform {
-                    position: SplittableMultiDimensional::Uniform(Property {
-                        value: Value::Fixed(vec![
-                            glyph.font_drawbox.width() / 2.0,
-                            glyph.font_drawbox.height() / 2.0,
-                        ]),
-                        ..Default::default()
-                    }),
-                    ..Default::default()
-                },
                 mixin: ShapeMixin {
                     shapes: vec![AnyShape::Group(group)],
                     ..Default::default()

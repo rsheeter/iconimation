@@ -2,6 +2,8 @@
 use skrifa::GlyphId;
 use thiserror::Error;
 
+use crate::animator::IntervalPosition;
+
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("Unable to draw: {0}")]
@@ -48,4 +50,8 @@ pub enum AnimationError {
 pub enum ToDeliveryError {
     #[error("Unable to convert to Lottie paths, {0}")]
     PathConversionError(Error),
+    #[error("Incompatible path sequence at t={0:?}")]
+    IncompatiblePath(IntervalPosition),
+    #[error("Unexpected animation at t={0:?}")]
+    UnexpectedAnimation(IntervalPosition),
 }

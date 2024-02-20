@@ -80,6 +80,18 @@ impl<T> Animated<T> {
     pub fn iter(&self) -> impl Iterator<Item = &(IntervalPosition, T)> {
         self.0.iter()
     }
+
+    pub fn into_iter(self) -> impl Iterator<Item = (IntervalPosition, T)> {
+        self.0.into_iter()
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_animated(&self) -> bool {
+        self.len() > 1
+    }
 }
 
 /// A producer of motion (value over time) curves
