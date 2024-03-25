@@ -70,7 +70,7 @@ fn get_f64(name: &str, captures: &Captures<'_>, i: usize) -> Result<f64, String>
 impl Command<'_> {
     fn parse(animation: &str) -> Result<Command, String> {
         const ANIMATE: &str = r"^Animate\s+(\w+)\s*:\s*";
-        const SPRING: &str = r"\s+using\s+([\w-]+)";
+        const SPRING: &str = r"(?:\s+using\s+([\w-]+))?";
         const VARIATION: &str = r"(?:\s+vary\s+(\S+)\s+to\s+(\S+))?";
         static ROTATE: OnceLock<Regex> = OnceLock::new();
         static SCALE: OnceLock<Regex> = OnceLock::new();
@@ -91,7 +91,8 @@ impl Command<'_> {
         let only_name = ONLY_NAME.get_or_init(|| {
             Regex::new(
                 &(ANIMATE.to_string()
-                    + r"(pulse|pulse-whole|twirl|twirl-whole|none)"
+                    + r"(pulse|pulse-whole|twirl|twirl-whole)?"
+                    + SPRING
                     + VARIATION
                     + "$"),
             )
@@ -108,11 +109,10 @@ impl Command<'_> {
             let to = get_f64("to", &captures, 3)?;
             Command::ScaleFromTo(nv, from, to)
         } else if let Some(captures) = only_name.captures_at(animation, 0) {
-            let nv = NameAndVariation::from_captures(&captures, 1, 3, 4)?;
-            let command = captures
-                .get(2)
-                .ok_or_else(|| "Unable to parse command".to_string())?;
-            match command.as_str() {
+            eprintln!("only_name captures\n{captures:?}");
+            let nv = NameAndVariation::from_captures(&captures, 1, 4, 5)?;
+            let command = captures.get(2).map(|m| m.as_str()).unwrap_or("none");
+            match command {
                 "none" => Command::None(nv),
                 "pulse" => Command::PulseParts(nv),
                 "pulse-whole" => Command::PulseWhole(nv),
@@ -121,7 +121,7 @@ impl Command<'_> {
                 _ => return Err("Unrecognized command".to_string()),
             }
         } else {
-            return Err("Unable to parse input".to_string());
+            return Err("Unrecognized command pattern".to_string());
         })
     }
 
@@ -292,7 +292,19 @@ mod tests {
     }
 
     #[test]
-    fn parse_scale_with_variation() {
+    fn parse_minimal_twirl() {
+        let cmd = Command::parse("Animate an_icon: twirl-whole").unwrap();
+        assert_eq!(Command::TwirlWhole(name_only("an_icon")), cmd);
+    }
+
+    #[test]
+    fn parse_only_variation() {
+        let cmd = Command::parse("Animate an_icon: vary FILL:0 to FILL:1").unwrap();
+        assert_eq!(Command::None(varied("an_icon", "FILL:0", "FILL:1")), cmd);
+    }
+
+    #[test]
+    fn parse_scale_with_variation_and_spring() {
         let cmd = Command::parse("Animate check_circle: scale 0 to 100 using expressive-spatial vary wght:400,FILL:1 to wght:700,FILL:0")
             .unwrap();
         assert_eq!(
@@ -306,7 +318,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_pulse_with_variation() {
+    fn parse_pulse_with_variation_and_spring() {
         let cmd = Command::parse("Animate close: pulse vary FILL:0 to FILL:1").unwrap();
         assert_eq!(
             Command::PulseParts(varied("close", "FILL:0", "FILL:1")),
