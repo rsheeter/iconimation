@@ -8,9 +8,8 @@ use iconimation::animate::Animation;
 use iconimation::debug_pen::DebugPen;
 use iconimation::default_template;
 use iconimation::ligate::icon_name_to_gid;
-use iconimation::AndroidSpring;
+use iconimation::spring::Spring;
 use iconimation::GlyphShape;
-use iconimation::Spring;
 use iconimation::Template;
 use skrifa::instance::Location;
 use skrifa::raw::types::InvalidTag;
@@ -167,16 +166,9 @@ fn main() {
     let animation = args.animation.to_lib(&glyph_shape);
     lottie.replace_shape(&animation).expect("Failed to animate");
 
-    let spring: Spring = AndroidSpring {
-        damping: 0.8,
-        stiffness: 380.0,
-        ..Default::default()
-    }
-    .into();
-
     if args.spring {
         lottie
-            .spring(spring)
+            .spring(Spring::expressive_spatial())
             .expect("Failed to apply spring-based animation");
     }
 
