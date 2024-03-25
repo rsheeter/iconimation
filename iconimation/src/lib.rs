@@ -329,28 +329,38 @@ impl Template for Lottie {
             let AnyLayer::Shape(layer) = layer else {
                 continue;
             };
-            let placeholders = placeholders(layer);
-            for placeholder in placeholders {
-                let Some(AnyShape::Transform(transform)) = placeholder.items.last_mut() else {
-                    eprintln!("A placeholder without a transform last?!");
-                    continue;
-                };
-                num_placeholders += 1;
-                for result in [
-                    transform
-                        .scale
-                        .spring(self.frame_rate, AnimatedValueType::Scale, spring),
-                    transform
-                        .position
-                        .spring(self.frame_rate, AnimatedValueType::Position, spring),
-                    transform
-                        .rotation
-                        .spring(self.frame_rate, AnimatedValueType::Rotation, spring),
-                ] {
-                    match result {
-                        Ok(()) => transforms_updated += 1,
-                        Err(Error::NoTransformsUpdated) => (),
-                        Err(..) => return result,
+            let mut frontier = placeholders(layer);
+            num_placeholders += frontier.len();
+            while let Some(group) = frontier.pop() {
+                for item in group.items.iter_mut() {
+                    match item {
+                        AnyShape::Group(group) => frontier.push(group),
+                        AnyShape::Transform(transform) => {
+                            for result in [
+                                transform.scale.spring(
+                                    self.frame_rate,
+                                    AnimatedValueType::Scale,
+                                    spring,
+                                ),
+                                transform.position.spring(
+                                    self.frame_rate,
+                                    AnimatedValueType::Position,
+                                    spring,
+                                ),
+                                transform.rotation.spring(
+                                    self.frame_rate,
+                                    AnimatedValueType::Rotation,
+                                    spring,
+                                ),
+                            ] {
+                                match result {
+                                    Ok(()) => transforms_updated += 1,
+                                    Err(Error::NoTransformsUpdated) => (),
+                                    Err(..) => return result,
+                                }
+                            }
+                        }
+                        _ => (),
                     }
                 }
             }
@@ -510,7 +520,7 @@ impl SpringBetween for Vec<MultiDimensionalKeyframe> {
             let k0 = &keyframes[0];
             let k0_frame = k0.start_time.floor();
             let k1 = &keyframes[1];
-            let k1_frame = k1.start_time.ceil();
+            //let k1_frame = k1.start_time.ceil();
 
             let Some(start_values) = &k0.start_value else {
                 continue;
@@ -525,19 +535,31 @@ impl SpringBetween for Vec<MultiDimensionalKeyframe> {
                     end_values.clone(),
                 ));
             }
-            let mut frame_values = Vec::with_capacity(start_values.len());
-            for (from, to) in start_values.iter().zip(end_values) {
-                let mut values = vec![AnimatedValue::new(*from, *to, value_type)];
-                for frame_offset in 1..=(k1_frame - k0_frame) as usize {
-                    let time_offset = frame_offset as f64 / frame_rate;
-                    let next = spring.update(time_offset, values[frame_offset - 1]);
-                    values.push(next);
-                    if next.is_at_equilibrium() {
-                        break;
-                    }
+
+            // Start a new chain of animated values for each independent value
+            let mut frame_values = Vec::<Vec<AnimatedValue>>::new();
+            frame_values.push(
+                (0..start_values.len())
+                    .map(|i| AnimatedValue::new(start_values[i], end_values[i], value_type))
+                    .collect(),
+            );
+
+            // We're done when all values reach equilibrium
+            // TODO: we also want to be done in the alloted time which means we need to scale the result
+            while let Some(current) = frame_values.last() {
+                if current.iter().all(|av| av.is_at_equilibrium()) {
+                    break;
                 }
-                frame_values.push(values);
+                let frame = frame_values.len();
+                let time = frame as f64 / frame_rate;
+
+                let next = current
+                    .iter()
+                    .map(|curr| spring.update(time, *curr))
+                    .collect();
+                frame_values.push(next);
             }
+            eprintln!("Equilibrium after {} frames", frame_values.len());
 
             for (frame_offset, values) in frame_values.into_iter().enumerate() {
                 let mut new_frame = (*k0).clone();
@@ -571,7 +593,6 @@ impl SpringBetween for Property<Vec<f64>, MultiDimensionalKeyframe> {
         spring: Spring,
     ) -> Result<(), Error> {
         let Value::Animated(keyframes) = &mut self.value else {
-            eprintln!("{value_type:?} not animated");
             return Err(Error::NoTransformsUpdated);
         };
         keyframes.spring(frame_rate, value_type, spring)
@@ -589,7 +610,6 @@ impl SpringBetween for Property<f64, MultiDimensionalKeyframe> {
         spring: Spring,
     ) -> Result<(), Error> {
         let Value::Animated(keyframes) = &mut self.value else {
-            eprintln!("{value_type:?} not animated");
             return Err(Error::NoTransformsUpdated);
         };
         keyframes.spring(frame_rate, value_type, spring)
