@@ -6,8 +6,8 @@ use clap::Parser;
 use clap::ValueEnum;
 use iconimation::animate::Animation;
 use iconimation::debug_pen::DebugPen;
-use iconimation::default_template;
 use iconimation::ligate::icon_name_to_gid;
+use iconimation::lottie_template;
 use iconimation::spring::Spring;
 use iconimation::GlyphShape;
 use iconimation::Template;
@@ -160,7 +160,7 @@ fn main() {
     let mut lottie = if let Some(template) = args.template {
         Lottie::load(template).expect("Unable to load custom template")
     } else {
-        default_template(&font_drawbox)
+        lottie_template(&font_drawbox)
     };
 
     let animation = args.animation.to_lib(&glyph_shape);

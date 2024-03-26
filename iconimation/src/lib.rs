@@ -1,6 +1,7 @@
 //! Shove glyphs from a variable font into a Lottie template.
 
 pub mod animate;
+pub mod command;
 pub mod debug_pen;
 pub mod error;
 pub mod ligate;
@@ -33,7 +34,7 @@ use write_fonts::pens::TransformPen;
 
 use crate::{error::Error, shape_pen::SubPathPen};
 
-pub fn default_template(font_drawbox: &Rect) -> Lottie {
+pub fn lottie_template(font_drawbox: &Rect) -> Lottie {
     Lottie {
         in_point: 0.0,
         out_point: 60.0, // 60fps total animation = 1s
