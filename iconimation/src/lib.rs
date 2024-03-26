@@ -7,7 +7,7 @@ pub mod ligate;
 mod shape_pen;
 pub mod spring;
 
-use std::{f64::consts::PI, fmt::Debug};
+use std::fmt::Debug;
 
 use bodymovin::{
     helpers::Transform,
@@ -28,6 +28,7 @@ use skrifa::{
     raw::{FontRef, TableProvider},
     GlyphId, MetadataProvider, OutlineGlyph,
 };
+use spring::{AnimatedValue, AnimatedValueType, Spring};
 use write_fonts::pens::TransformPen;
 
 use crate::{error::Error, shape_pen::SubPathPen};
@@ -322,30 +323,50 @@ impl Template for Lottie {
     }
 
     fn spring(&mut self, spring: Spring) -> Result<(), Error> {
-        let timing = Timing::new(self);
         let mut transforms_updated = 0;
+        let mut num_placeholders = 0;
         for layer in self.layers.iter_mut() {
             let AnyLayer::Shape(layer) = layer else {
                 continue;
             };
-            let placeholders = placeholders(layer);
-            for placeholder in placeholders {
-                let Some(AnyShape::Transform(transform)) = placeholder.items.last_mut() else {
-                    eprintln!("A placeholder without a transform last?!");
-                    continue;
-                };
-                for result in [
-                    transform.scale.spring(timing, spring),
-                    transform.position.spring(timing, spring),
-                    transform.rotation.spring(timing, spring),
-                ] {
-                    match result {
-                        Ok(()) => transforms_updated += 1,
-                        Err(Error::NoTransformsUpdated) => (),
-                        Err(..) => return result,
+            let mut frontier = placeholders(layer);
+            num_placeholders += frontier.len();
+            while let Some(group) = frontier.pop() {
+                for item in group.items.iter_mut() {
+                    match item {
+                        AnyShape::Group(group) => frontier.push(group),
+                        AnyShape::Transform(transform) => {
+                            for result in [
+                                transform.scale.spring(
+                                    self.frame_rate,
+                                    AnimatedValueType::Scale,
+                                    spring,
+                                ),
+                                transform.position.spring(
+                                    self.frame_rate,
+                                    AnimatedValueType::Position,
+                                    spring,
+                                ),
+                                transform.rotation.spring(
+                                    self.frame_rate,
+                                    AnimatedValueType::Rotation,
+                                    spring,
+                                ),
+                            ] {
+                                match result {
+                                    Ok(()) => transforms_updated += 1,
+                                    Err(Error::NoTransformsUpdated) => (),
+                                    Err(..) => return result,
+                                }
+                            }
+                        }
+                        _ => (),
                     }
                 }
             }
+        }
+        if num_placeholders == 0 {
+            return Err(Error::NoPlaceholders);
         }
         if transforms_updated == 0 {
             return Err(Error::NoTransformsUpdated);
@@ -459,239 +480,101 @@ fn subpaths_for_glyph(
     Ok(subpath_pen.into_shapes())
 }
 
-/// Spring params, Compose style
-pub struct AndroidSpring {
-    pub mass: f64,
-    pub stiffness: f64,
-    pub damping: f64,
-    pub initial_velocity: f64,
-}
-
-impl Default for AndroidSpring {
-    fn default() -> Self {
-        Self {
-            mass: 1.0,
-            stiffness: 100.0,
-            damping: 10.0,
-            initial_velocity: 0.0,
-        }
-    }
-}
-
-#[derive(Copy, Clone, Debug)]
-struct Timing {
-    in_point: f64,
-    out_point: f64,
-    frame_rate: f64,
-}
-
-impl Timing {
-    fn new(lottie: &Lottie) -> Self {
-        Timing {
-            in_point: lottie.in_point,
-            out_point: lottie.out_point,
-            frame_rate: lottie.frame_rate,
-        }
-    }
-
-    fn frame_to_time(&self, frame: f64) -> f64 {
-        frame / self.frame_rate
-    }
-
-    /// Assumes keyframes are sorted by time.
-    ///
-    /// getMostRecentKeyIndex in js version
-    fn keyframe_before(&self, time: f64, keyframes: &[MultiDimensionalKeyframe]) -> Option<usize> {
-        let mut result = None;
-        for (i, keyframe) in keyframes.iter().enumerate() {
-            if time >= self.frame_to_time(keyframe.start_time) {
-                result = Some(i);
-            }
-        }
-        result
-    }
-}
-
-#[derive(Copy, Clone, Debug)]
-pub struct Spring {
-    initial_velocity: f64,
-    w0: f64,
-    zeta: f64,
-}
-
-impl Spring {
-    pub fn new(initial_velocity: f64, stiffness: f64, damping: f64) -> Spring {
-        let mass = 1.0;
-        Spring {
-            initial_velocity,
-            w0: (stiffness / mass).sqrt(),
-            zeta: damping / (2.0 * (stiffness * mass).sqrt()),
-        }
-    }
-
-    /// progress how much time has elapsed since t0
-    ///
-    /// getSpringedProgress in js
-    fn progress(&self, progress: f64) -> f64 {
-        let a = 1.0;
-        // If damping is too low do things differently
-        if self.zeta < 1.0 {
-            let wd = self.w0 * (1.0 - self.zeta * self.zeta).sqrt();
-            let b = (self.zeta * self.w0 - self.initial_velocity) / wd;
-            1.0 - (-progress * self.zeta * self.w0).exp()
-                * (a * (wd * progress).cos() + b * (wd * progress).sin())
-        } else {
-            let b = -self.initial_velocity + self.w0;
-            1.0 - (a + b * progress) * (-progress * self.w0).exp()
-        }
-    }
-}
-
-impl Default for Spring {
-    fn default() -> Self {
-        AndroidSpring::default().into()
-    }
-}
-
-impl From<AndroidSpring> for Spring {
-    fn from(value: AndroidSpring) -> Self {
-        let mass = 1.0;
-        let mult = 2.0 * PI / (value.stiffness / value.mass).sqrt();
-        let damping = 4.0 * PI * value.damping * mass / mult;
-        Spring::new(value.initial_velocity, value.stiffness, damping)
-    }
-}
-
 /// Move between keyframes using a spring. Boing.
 trait SpringBetween {
     type Item;
 
-    fn springed_value(
-        &self,
-        time: f64,
-        timing: Timing,
-        spring: Spring,
-    ) -> Result<Self::Item, Error>;
-
     /// Populate the motion between keyframes using a spring function    
-    fn spring(&mut self, timing: Timing, spring: Spring) -> Result<(), Error>;
+    fn spring(
+        &mut self,
+        frame_rate: f64,
+        value_type: AnimatedValueType,
+        spring: Spring,
+    ) -> Result<(), Error>;
 }
-
-/// calculateAnimatedValue in js
-fn animated_value(from: &[f64], to: &[f64], progress: f64) -> Vec<f64> {
-    assert_eq!(
-        from.len(),
-        to.len(),
-        "Nonsensical from/to, from {from:?} to {to:?}"
-    );
-    from.iter()
-        .zip(to)
-        .map(|(from, to)| {
-            let delta = to - from;
-            let updated_delta = delta * progress;
-            from + updated_delta
-        })
-        .collect()
-}
-
-const KEYFRAME_VALUE_EPSILON: f64 = 0.01;
 
 impl SpringBetween for Vec<MultiDimensionalKeyframe> {
     type Item = MultiDimensionalKeyframe;
 
-    fn springed_value(
-        &self,
-        frame: f64,
-        timing: Timing,
+    fn spring(
+        &mut self,
+        frame_rate: f64,
+        value_type: AnimatedValueType,
         spring: Spring,
-    ) -> Result<Self::Item, Error> {
-        let time = timing.frame_to_time(frame);
-        let keyframe_idx = timing.keyframe_before(time, self).unwrap_or(0);
+    ) -> Result<(), Error> {
+        if self.len() < 2 {
+            eprintln!("Spring nop, our len is {}", self.len());
+            return Ok(()); // nop w/o at least 2 keys
+        }
 
-        // getKeys in js
-        let k0 = &self[keyframe_idx.saturating_sub(1)];
-        let k1 = &self[keyframe_idx];
+        if self.len() != 2 {
+            panic!("TODO: multiple keyframe support");
+        }
 
-        let springed_progress = spring.progress(time - timing.frame_to_time(k1.start_time));
-        let end_values = k1.start_value.as_ref().unwrap();
-
-        // we want to start from where we last finished; getPrevAnimationEndValue in js
-        let prev_end_value = if keyframe_idx > 0 {
-            let pk0 = &self[keyframe_idx.saturating_sub(2)];
-            let pk1 = &self[keyframe_idx.saturating_sub(1)];
-            let progress = spring.progress(
-                timing.frame_to_time(k1.start_time) - timing.frame_to_time(k0.start_time),
-            );
-            let prev_value = animated_value(
-                pk0.start_value.as_ref().unwrap(),
-                pk1.start_value.as_ref().unwrap(),
-                progress,
-            );
-            prev_value
-        } else {
-            end_values.to_vec()
-        };
-
-        let mut new_frame = (*k0).clone();
-        new_frame.start_time = frame;
-        new_frame.start_value = Some(animated_value(
-            &prev_end_value,
-            end_values,
-            springed_progress,
-        ));
-
-        Ok(new_frame)
-    }
-
-    fn spring(&mut self, timing: Timing, spring: Spring) -> Result<(), Error> {
         // Sort so windows yield consecutive keyframes in time
         self.sort_by_key(|k| OrderedFloat(k.start_time));
+
         let mut new_frames = Vec::new();
 
-        // +50 : TEMPORARY DUE TO TESTDATA
-        for frame in timing.in_point.ceil() as usize..=(timing.out_point.floor() as usize + 50) {
-            let new_frame = self.springed_value(frame as f64, timing, spring);
-            new_frames.push(new_frame?);
-        }
-        if new_frames.is_empty() {
-            return Err(Error::NoTransformsUpdated);
-        }
+        for keyframes in self.windows(2) {
+            let k0 = &keyframes[0];
+            let k0_frame = k0.start_time.floor();
+            let k1 = &keyframes[1];
+            //let k1_frame = k1.start_time.ceil();
 
-        // Our Springs tend to generate series of almost identical frames; blast those
-        if new_frames.len() > 2 {
-            let mut i = 0;
-            let mut drops = Vec::new();
-            while i < new_frames.len() - 2 {
-                let Some(i_value) = &new_frames[i].start_value.as_ref() else {
-                    continue;
-                };
-                let mut run_len: usize = 0;
-                for j_frame in new_frames.iter().skip(i + 1) {
-                    let Some(j_value) = j_frame.start_value.as_ref() else {
-                        break;
-                    };
-                    if i_value
-                        .iter()
-                        .zip(j_value.iter())
-                        .any(|(a, b)| (a - b).abs() >= KEYFRAME_VALUE_EPSILON)
-                    {
-                        break;
-                    }
-                    run_len += 1;
-                }
-                if run_len > 2 {
-                    drops.extend(i + 1..i + run_len);
-                }
-
-                i += run_len + 1;
+            let Some(start_values) = &k0.start_value else {
+                continue;
+            };
+            let Some(end_values) = &k1.start_value else {
+                continue;
+            };
+            if start_values.len() != end_values.len() {
+                return Err(Error::ValueLengthMismatch(
+                    value_type,
+                    start_values.clone(),
+                    end_values.clone(),
+                ));
             }
-            eprintln!("Drop {} unnecessary (duplicate) frames", drops.len());
-            for i in drops.into_iter().rev() {
-                new_frames.remove(i);
+
+            // Start a new chain of animated values for each independent value
+            let mut frame_values = Vec::<Vec<AnimatedValue>>::new();
+            frame_values.push(
+                (0..start_values.len())
+                    .map(|i| AnimatedValue::new(start_values[i], end_values[i], value_type))
+                    .collect(),
+            );
+
+            // We're done when all values reach equilibrium
+            // TODO: we also want to be done in the alloted time which means we need to scale the result
+            while let Some(current) = frame_values.last() {
+                if current.iter().all(|av| av.is_at_equilibrium()) {
+                    break;
+                }
+                let frame = frame_values.len();
+                let time = frame as f64 / frame_rate;
+
+                let next = current
+                    .iter()
+                    .map(|curr| spring.update(time, *curr))
+                    .collect();
+                frame_values.push(next);
+            }
+            eprintln!("Equilibrium after {} frames", frame_values.len());
+
+            for (frame_offset, values) in frame_values.into_iter().enumerate() {
+                let mut new_frame = (*k0).clone();
+                new_frame.start_time = k0_frame + frame_offset as f64;
+                new_frame.start_value = Some(values.into_iter().map(|av| av.value).collect());
+                new_frames.push(new_frame);
             }
         }
 
         // completely replace the original frames
+        eprintln!(
+            "Update {value_type:?} from {} to {} frames",
+            self.len(),
+            new_frames.len()
+        );
         self.clear();
         self.extend(new_frames);
 
@@ -703,23 +586,16 @@ impl SpringBetween for Vec<MultiDimensionalKeyframe> {
 impl SpringBetween for Property<Vec<f64>, MultiDimensionalKeyframe> {
     type Item = MultiDimensionalKeyframe;
 
-    fn springed_value(
-        &self,
-        time: f64,
-        timing: Timing,
+    fn spring(
+        &mut self,
+        frame_rate: f64,
+        value_type: AnimatedValueType,
         spring: Spring,
-    ) -> Result<Self::Item, Error> {
-        let Value::Animated(keyframes) = &self.value else {
-            return Err(Error::NoTransformsUpdated);
-        };
-        keyframes.springed_value(time, timing, spring)
-    }
-
-    fn spring(&mut self, timing: Timing, spring: Spring) -> Result<(), Error> {
+    ) -> Result<(), Error> {
         let Value::Animated(keyframes) = &mut self.value else {
             return Err(Error::NoTransformsUpdated);
         };
-        keyframes.spring(timing, spring)
+        keyframes.spring(frame_rate, value_type, spring)
     }
 }
 
@@ -727,39 +603,18 @@ impl SpringBetween for Property<Vec<f64>, MultiDimensionalKeyframe> {
 impl SpringBetween for Property<f64, MultiDimensionalKeyframe> {
     type Item = MultiDimensionalKeyframe;
 
-    fn springed_value(
-        &self,
-        time: f64,
-        timing: Timing,
+    fn spring(
+        &mut self,
+        frame_rate: f64,
+        value_type: AnimatedValueType,
         spring: Spring,
-    ) -> Result<Self::Item, Error> {
-        let Value::Animated(keyframes) = &self.value else {
-            return Err(Error::NoTransformsUpdated);
-        };
-        keyframes.springed_value(time, timing, spring)
-    }
-
-    fn spring(&mut self, timing: Timing, spring: Spring) -> Result<(), Error> {
+    ) -> Result<(), Error> {
         let Value::Animated(keyframes) = &mut self.value else {
             return Err(Error::NoTransformsUpdated);
         };
-        keyframes.spring(timing, spring)
+        keyframes.spring(frame_rate, value_type, spring)
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use crate::{AndroidSpring, Spring};
-
-    // value at the in-point for one of our demo files which we initially computed entirely wrong courtesy of a few key mistranscriptions :)
-    #[test]
-    fn spring_progress_at_demo_inpoint() {
-        let spring: Spring = AndroidSpring {
-            damping: 0.8,
-            stiffness: 380.0,
-            ..Default::default()
-        }
-        .into();
-        assert_eq!(-663.66, (100.0 * spring.progress(-0.4)).round() / 100.0);
-    }
-}
+mod tests {}

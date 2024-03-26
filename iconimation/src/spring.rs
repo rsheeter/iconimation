@@ -1,8 +1,10 @@
 //! Spring-based animation, ported from [Android's implmentation](https://cs.android.com/android/platform/superproject/main/+/main:frameworks/base/core/java/com/android/internal/dynamicanimation/animation/)
 
+use std::str::FromStr;
+
 use crate::error::SpringBuildError;
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum Spring {
     Overdamped {
         gamma_plus: f64,
@@ -127,17 +129,32 @@ impl Spring {
     }
 }
 
+impl FromStr for Spring {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "standard" => Ok(Spring::standard()),
+            "smooth-spatial" => Ok(Spring::smooth_spatial()),
+            "smooth-non-spatial" => Ok(Spring::smooth_non_spatial()),
+            "expressive-spatial" => Ok(Spring::expressive_spatial()),
+            "expressive-non-spatial" => Ok(Spring::expressive_non_spatial()),
+            _ => Err(()),
+        }
+    }
+}
+
 /// The state of something being animated
 ///
 /// <https://cs.android.com/android/platform/superproject/main/+/main:frameworks/base/core/java/com/android/internal/dynamicanimation/animation/DynamicAnimation.java;l=332-336;drc=d43dfb63eaf6cf07414c0a6a556f4f5881fa9fad>
 /// <https://cs.android.com/android/platform/superproject/main/+/main:frameworks/base/core/java/com/android/internal/dynamicanimation/animation/SpringForce.java;l=261-307;drc=b7d26a383dbb3c7fa3f276d8ad1afdac5bb5443f>
 #[derive(Debug, Copy, Clone)]
 pub struct AnimatedValue {
-    value: f64,
-    value_type: AnimatedValueType,
-    velocity: f64,
-    final_value: f64,
-    time: f64,
+    pub value: f64,
+    pub value_type: AnimatedValueType,
+    pub velocity: f64,
+    pub final_value: f64,
+    pub time: f64,
 }
 
 impl AnimatedValue {
@@ -164,6 +181,7 @@ struct ValueThresholds {
     velocity_threshold: f64,
 }
 
+/// We need to know the value type because it influences associated constants
 #[derive(Debug, Copy, Clone)]
 pub enum AnimatedValueType {
     Rotation,
