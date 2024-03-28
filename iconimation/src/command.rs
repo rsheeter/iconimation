@@ -5,7 +5,10 @@ use std::{str::FromStr, sync::OnceLock};
 use regex::{Captures, Regex};
 use skrifa::{raw::FontRef, MetadataProvider, Tag};
 
-use crate::{error::Error, ligate::icon_name_to_gid, spring::Spring, GlyphShape};
+use crate::{
+    animate::Animation, error::Error, ligate::icon_name_to_gid, spring::Spring, GlyphShape,
+    ToLottie,
+};
 
 #[derive(Debug, PartialEq)]
 pub struct NameAndVariation<'a> {
@@ -119,7 +122,17 @@ impl Command<'_> {
         })
     }
 
-    fn icon_name(&self) -> &str {
+    pub(crate) fn animation<'a>(&self, to_lottie: &'a dyn ToLottie) -> Animation<'a> {
+        match self {
+            Command::PulseParts(..) => Animation::PulseParts(to_lottie),
+            Command::PulseWhole(..) => Animation::PulseWhole(to_lottie),
+            Command::TwirlParts(..) => Animation::TwirlParts(to_lottie),
+            Command::TwirlWhole(..) => Animation::TwirlWhole(to_lottie),
+            _ => Animation::None(to_lottie),
+        }
+    }
+
+    pub fn icon_name(&self) -> &str {
         match self {
             Command::None(nv, ..)
             | Command::RotateDegrees(nv, ..)

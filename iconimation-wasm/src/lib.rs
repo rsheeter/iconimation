@@ -3,16 +3,12 @@
 use bodymovin::Bodymovin as Lottie;
 use iconimation::{
     command::{parse_command, Command},
-    lottie_template, GlyphShape, Template,
+    generate_lottie, GlyphShape,
 };
 
 use js_sys::{ArrayBuffer, Uint8Array};
-use kurbo::{Point, Rect};
 use serde::Serialize;
-use skrifa::{
-    raw::{FontRef, TableProvider},
-    MetadataProvider,
-};
+use skrifa::{raw::FontRef, MetadataProvider};
 
 use wasm_bindgen::prelude::*;
 
@@ -21,26 +17,6 @@ struct Animations {
     lottie: Lottie,
     avd: String,
     debug: String,
-}
-
-fn generate_lottie(
-    font: &FontRef,
-    command: &Command,
-    glyph_shape: &GlyphShape,
-) -> Result<Lottie, String> {
-    let upem = font.head().unwrap().units_per_em() as f64;
-    let font_drawbox: Rect = (Point::ZERO, Point::new(upem, upem)).into();
-
-    let mut lottie = lottie_template(&font_drawbox);
-    lottie
-        .replace_shape(glyph_shape)
-        .map_err(|e| format!("replace_shape failed: {e}"))?;
-    if let Some(spring) = command.spring() {
-        lottie
-            .spring(spring)
-            .map_err(|e| format!("Spring failed: {e}"))?;
-    }
-    Ok(lottie)
 }
 
 fn generate_animated_vector_drawable(
@@ -86,7 +62,8 @@ pub fn generate_animation(raw_font: &ArrayBuffer, raw_command: String) -> Result
             .join(", ")
     );
 
-    let lottie = generate_lottie(&font, &command, &glyph_shape)?;
+    let lottie = generate_lottie(&font, &command, &glyph_shape)
+        .map_err(|e| format!("generate_lottie failed: {e}"))?;
     let avd = generate_animated_vector_drawable(&font, &command, &glyph_shape)?;
 
     Ok(serde_json::to_string_pretty(&Animations { lottie, avd, debug }).unwrap())

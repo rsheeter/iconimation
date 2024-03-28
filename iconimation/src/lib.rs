@@ -21,6 +21,7 @@ use bodymovin::{
     sources::Asset,
     Bodymovin as Lottie,
 };
+use command::Command;
 use kurbo::{Affine, BezPath, PathEl, Point, Rect};
 use ordered_float::OrderedFloat;
 use skrifa::{
@@ -33,6 +34,23 @@ use spring::{AnimatedValue, AnimatedValueType, Spring};
 use write_fonts::pens::TransformPen;
 
 use crate::{error::Error, shape_pen::SubPathPen};
+
+pub fn generate_lottie(
+    font: &FontRef,
+    command: &Command,
+    glyph_shape: &GlyphShape,
+) -> Result<Lottie, Error> {
+    let upem = font.head().unwrap().units_per_em() as f64;
+    let font_drawbox: Rect = (Point::ZERO, Point::new(upem, upem)).into();
+
+    let mut lottie = lottie_template(&font_drawbox);
+    let animation = command.animation(glyph_shape);
+    lottie.replace_shape(&animation)?;
+    if let Some(spring) = command.spring() {
+        lottie.spring(spring)?
+    }
+    Ok(lottie)
+}
 
 pub fn lottie_template(font_drawbox: &Rect) -> Lottie {
     Lottie {

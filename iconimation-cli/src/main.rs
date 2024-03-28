@@ -1,43 +1,14 @@
 use std::str::FromStr;
 use std::{fs, path::Path};
 
-use bodymovin::Bodymovin as Lottie;
 use clap::Parser;
-use clap::ValueEnum;
-use iconimation::animate::Animation;
-use iconimation::debug_pen::DebugPen;
-use iconimation::ligate::icon_name_to_gid;
-use iconimation::lottie_template;
-use iconimation::spring::Spring;
-use iconimation::GlyphShape;
-use iconimation::Template;
+use iconimation::command::parse_command;
+use iconimation::generate_lottie;
 use skrifa::instance::Location;
 use skrifa::raw::types::InvalidTag;
 use skrifa::raw::FontRef;
 use skrifa::{MetadataProvider, Tag};
 use thiserror::Error;
-
-/// Clap-friendly version of [Animation]
-#[derive(ValueEnum, Clone, Debug)]
-pub enum CliAnimation {
-    None,
-    PulseWhole,
-    PulseParts,
-    TwirlWhole,
-    TwirlParts,
-}
-
-impl CliAnimation {
-    fn to_lib<'a>(&self, shape: &'a GlyphShape) -> Animation<'a> {
-        match self {
-            CliAnimation::None => Animation::None(shape),
-            CliAnimation::PulseWhole => Animation::PulseWhole(shape),
-            CliAnimation::PulseParts => Animation::PulseParts(shape),
-            CliAnimation::TwirlWhole => Animation::TwirlWhole(shape),
-            CliAnimation::TwirlParts => Animation::TwirlParts(shape),
-        }
-    }
-}
 
 #[derive(Parser)]
 struct Args {
@@ -45,33 +16,15 @@ struct Args {
     #[arg(long)]
     debug: bool,
 
-    /// Whether to generate spring-based animation between keyframes
-    #[arg(long)]
-    spring: bool,
+    #[arg(short, long)]
+    #[clap(required(true))]
+    command: String,
 
-    #[clap(value_enum, required(true))]
-    #[arg(long)]
-    animation: CliAnimation,
-
-    #[arg(long)]
-    icon: String,
-
-    /// CSV of axis positions in user coords. If unset, the default location. E.g. FILL:0,wght:100
-    #[arg(long)]
-    from: Option<String>,
-
-    /// CSV of axis positions in user coords. If unset, the default location. E.g. FILL:1,wght:700
-    #[arg(long)]
-    to: Option<String>,
-
-    #[arg(long)]
-    template: Option<String>,
-
-    #[arg(long)]
+    #[arg(short, long)]
     #[clap(required(true))]
     font: String,
 
-    #[arg(long)]
+    #[arg(short, long)]
     #[clap(default_value = "output.json")]
     out_file: String,
 }
@@ -123,54 +76,12 @@ fn main() {
     let font_bytes = fs::read(font_file).unwrap();
     let font = FontRef::new(&font_bytes).unwrap();
 
-    let gid = if args.icon.starts_with("0x") {
-        let codepoint = u32::from_str_radix(&args.icon[2..], 16).unwrap();
-        font.charmap()
-            .map(codepoint)
-            .unwrap_or_else(|| panic!("No gid for 0x{codepoint:04x}"))
-    } else {
-        icon_name_to_gid(&font, &args.icon)
-            .unwrap_or_else(|e| panic!("Unable to resolve '{}' to a glyph id: {e}", args.icon))
-    };
+    let (command, glyph_shape) = parse_command(&font, &args.command).unwrap();
 
-    let start = font
-        .parse_location(args.from.as_deref())
-        .unwrap_or_else(|e| panic!("Unable to parse --from: {e}"));
-    let end = font
-        .parse_location(args.to.as_deref())
-        .unwrap_or_else(|e| panic!("Unable to parse --to: {e}"));
-
-    let glyph_shape =
-        GlyphShape::new(&font, gid, start, Some(end)).expect("Unable to create replacement");
     let font_drawbox = glyph_shape.drawbox();
     eprintln!("font_drawbox {:?}", font_drawbox);
 
-    if args.debug {
-        let mut pen = DebugPen::new(font_drawbox);
-        font.outline_glyphs()
-            .get(gid)
-            .unwrap_or_else(|| panic!("No glyph for {gid}"))
-            .draw(skrifa::instance::Size::unscaled(), &mut pen)
-            .unwrap();
-        let debug_out = Path::new(&args.out_file).with_extension("svg");
-        fs::write(debug_out, pen.to_svg()).unwrap();
-        eprintln!("Wrote debug svg {}", args.out_file);
-    }
-
-    let mut lottie = if let Some(template) = args.template {
-        Lottie::load(template).expect("Unable to load custom template")
-    } else {
-        lottie_template(&font_drawbox)
-    };
-
-    let animation = args.animation.to_lib(&glyph_shape);
-    lottie.replace_shape(&animation).expect("Failed to animate");
-
-    if args.spring {
-        lottie
-            .spring(Spring::expressive_spatial())
-            .expect("Failed to apply spring-based animation");
-    }
+    let lottie = generate_lottie(&font, &command, &glyph_shape).unwrap();
 
     fs::write(
         &args.out_file,
