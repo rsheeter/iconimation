@@ -17,3 +17,5 @@ write-fonts = "0.21.0"  # pens
 thiserror.workspace = true
 
 ordered-float = "4.2"
+
+serde = { version="1.0", features=["derive"]}

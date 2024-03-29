@@ -1,15 +1,20 @@
 //! Shove glyphs from a variable font into a Lottie template.
 
-pub mod animate;
-pub mod command;
+pub mod android;
+pub mod animate_legacy;
+mod bezop;
 pub mod debug_pen;
 pub mod error;
+pub mod ir;
 pub mod ligate;
+pub mod lottie;
+pub mod plan;
 mod shape_pen;
 pub mod spring;
 
 use std::fmt::Debug;
 
+use bezop::y_up_to_y_down;
 use bodymovin::{
     helpers::Transform,
     layers::{AnyLayer, Layer, ShapeMixin},
@@ -21,9 +26,9 @@ use bodymovin::{
     sources::Asset,
     Bodymovin as Lottie,
 };
-use command::Command;
 use kurbo::{Affine, BezPath, PathEl, Point, Rect};
 use ordered_float::OrderedFloat;
+use plan::AnimationPlan;
 use skrifa::{
     instance::{Location, LocationRef, Size},
     outline::DrawSettings,
@@ -37,14 +42,14 @@ use crate::{error::Error, shape_pen::SubPathPen};
 
 pub fn generate_lottie(
     font: &FontRef,
-    command: &Command,
+    command: &AnimationPlan,
     glyph_shape: &GlyphShape,
 ) -> Result<Lottie, Error> {
     let upem = font.head().unwrap().units_per_em() as f64;
     let font_drawbox: Rect = (Point::ZERO, Point::new(upem, upem)).into();
 
     let mut lottie = lottie_template(&font_drawbox);
-    let animation = command.animation(glyph_shape);
+    let animation = command.legacy_animation(glyph_shape);
     lottie.replace_shape(&animation)?;
     if let Some(spring) = command.spring() {
         lottie.spring(spring)?
@@ -172,7 +177,7 @@ fn path_commands(bez: &BezPath) -> String {
 
 impl<'a> ToLottie for GlyphShape<'a> {
     fn create(&self, start: f64, end: f64, dest_box: Rect) -> Result<Vec<AnyShape>, Error> {
-        let transform = rect_to_rect(self.drawbox(), dest_box);
+        let transform = y_up_to_y_down(self.drawbox(), dest_box);
 
         // We need at least the starting outline
         let start_loc = (&self.start).into();
@@ -392,36 +397,6 @@ impl Template for Lottie {
         }
         Ok(())
     }
-}
-
-/// Simplified version of [Affine2D::rect_to_rect](https://github.com/googlefonts/picosvg/blob/a0bcfade7a60cbd6f47d8bfe65b6d471cee628c0/src/picosvg/svg_transform.py#L216-L263)
-fn rect_to_rect(font_box: Rect, lottie_box: Rect) -> Affine {
-    assert!(font_box.width() > 0.0);
-    assert!(font_box.height() > 0.0);
-    assert!(lottie_box.width() > 0.0);
-    assert!(lottie_box.height() > 0.0);
-
-    let (sx, sy) = (
-        lottie_box.width() / font_box.width(),
-        lottie_box.height() / font_box.height(),
-    );
-    let transform = Affine::IDENTITY
-        // Move the font box to touch the origin
-        .then_translate((-font_box.min_x(), -font_box.min_y()).into())
-        // Do a flip!
-        .then_scale_non_uniform(1.0, -1.0)
-        // Scale to match the target box
-        .then_scale_non_uniform(sx, sy);
-
-    // Line up
-    let adjusted_font_box = transform.transform_rect_bbox(font_box);
-    transform.then_translate(
-        (
-            lottie_box.min_x() - adjusted_font_box.min_x(),
-            lottie_box.min_y() - adjusted_font_box.min_y(),
-        )
-            .into(),
-    )
 }
 
 fn add_shape_to_path(path: &mut BezPath, shape: &ShapeValue) {

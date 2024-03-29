@@ -1,11 +1,12 @@
 //! Error types
 use std::num::ParseFloatError;
 
-use skrifa::GlyphId;
+use kurbo::BezPath;
+use skrifa::{outline::DrawError, raw::ReadError, GlyphId};
 use thiserror::Error;
 use write_fonts::types::InvalidTag;
 
-use crate::spring::AnimatedValueType;
+use crate::{ir::Keyframed, spring::AnimatedValueType};
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -54,3 +55,24 @@ pub enum IconNameError {
     #[error("The icon name '{0}' has no ligature")]
     NoLigature(String),
 }
+
+#[derive(Debug, Error)]
+pub enum AnimationError {
+    #[error("The 'head' table isn't present, {0}")]
+    NoHeadTable(ReadError),
+    #[error("Unable to draw {0:?}: {1}")]
+    DrawError(GlyphId, DrawError),
+    #[error("Must have at least 1 keyframe")]
+    NoKeyframes,
+    #[error("Keyframe frame must be unique, multiple definitions of {0}")]
+    MultipleValuesForFrame(f64),
+}
+
+#[derive(Debug, Error)]
+pub enum LottieError {
+    #[error("Interpolation-incompatible paths: {0:?}")]
+    IncompatiblePaths(Keyframed<BezPath>),
+}
+
+#[derive(Debug, Error)]
+pub enum AndroidError {}
