@@ -1,0 +1,2 @@
+* `Symbols-reduced.ttf` produced using https://github.com/rsheeter/subset-gf-icons
+   * `subset_gf_icons ../material-design-icons/variablefont/MaterialSymbolsOutlined\[FILL\,GRAD\,opsz\,wght\].ttf pause_circle play_circle stadia_controller more_horiz settings bolt check_circle check_box`

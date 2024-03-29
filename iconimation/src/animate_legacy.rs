@@ -7,9 +7,10 @@ use std::fmt::Debug;
 use bodymovin::properties::{Bezier2d, BezierEase, MultiDimensionalKeyframe, Property};
 use bodymovin::properties::{ControlPoint2d, Value};
 use bodymovin::shapes::{AnyShape, Fill, Group, Transform};
-use kurbo::{BezPath, PathEl, Point, Rect, Shape, Vec2};
+use kurbo::{BezPath, Point, Rect, Shape};
 use ordered_float::OrderedFloat;
 
+use crate::bezop::ContainedPoint;
 use crate::{bez_for_subpath, Error, ToLottie};
 
 #[derive(Debug)]
@@ -64,24 +65,6 @@ fn default_ease() -> BezierEase {
     })
 }
 
-/// Find a point that is contained within the subpath
-///
-/// Meant for simplified (assume the answer is the same for the entire subpath) nonzero fill resolution.
-pub fn a_contained_point(subpath: &BezPath) -> Option<Point> {
-    let Some(PathEl::MoveTo(p)) = subpath.elements().first() else {
-        eprintln!("Subpath doesn't start with a move!");
-        return None;
-    };
-
-    // our shapes are simple, just bet that a nearby point is contained
-    let offsets = [0.0, 0.001, -0.001];
-    offsets
-        .iter()
-        .flat_map(|x_off| offsets.iter().map(|y_off| Vec2::new(*x_off, *y_off)))
-        .map(|offset| *p + offset)
-        .find(|p| subpath.contains(*p))
-}
-
 /// Piece-wise animation wants to animate "parts" as the eye perceives them; try to so group
 ///
 /// Most importantly, if we have a shape and hole(s) cut out of it they should be together.
@@ -102,7 +85,7 @@ pub fn group_icon_parts(shapes: Vec<AnyShape>) -> Vec<Vec<AnyShape>> {
     let filled: Vec<_> = paths
         .iter()
         .map(|bez| {
-            let Some(contained) = a_contained_point(bez) else {
+            let Some(contained) = bez.contained_point() else {
                 if bez.area() != 0.0 {
                     eprintln!("THERE IS NO CONTAINED POINT?! {}", bez.to_svg());
                 }

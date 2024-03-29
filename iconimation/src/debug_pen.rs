@@ -7,7 +7,8 @@ use skrifa::outline::OutlinePen;
 use write_fonts::pens::write_to_pen;
 
 use crate::{
-    animate::{a_contained_point, group_icon_parts, LottieGeometry},
+    animate_legacy::{group_icon_parts, LottieGeometry},
+    bezop::ContainedPoint,
     shape_pen::SubPathPen,
 };
 
@@ -44,7 +45,7 @@ fn draw_annotated(svg: &mut String, y_offset: f64, mut paths: Vec<BezPath>) {
     for path in &paths {
         let path_svg = path.to_svg();
 
-        let contained = a_contained_point(path);
+        let contained = path.contained_point();
         let mut filled = 0;
         if let Some(contained) = contained {
             // work out non-zero fill

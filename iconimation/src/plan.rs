@@ -6,7 +6,7 @@ use regex::{Captures, Regex};
 use skrifa::{raw::FontRef, MetadataProvider, Tag};
 
 use crate::{
-    animate::Animation, error::Error, ligate::icon_name_to_gid, spring::Spring, GlyphShape,
+    animate_legacy::Animation, error::Error, ligate::icon_name_to_gid, spring::Spring, GlyphShape,
     ToLottie,
 };
 
@@ -48,8 +48,9 @@ impl<'a> NameAndVariation<'a> {
 
 type UserLocation = Vec<(Tag, f32)>;
 
+/// Describes animation. Apply to a [`crate::ir::Animation`] to actually do something.
 #[derive(Debug, PartialEq)]
-pub enum Command<'a> {
+pub enum AnimationPlan<'a> {
     None(NameAndVariation<'a>),
     RotateDegrees(NameAndVariation<'a>, f64),
     ScaleFromTo(NameAndVariation<'a>, f64, f64),
@@ -64,8 +65,8 @@ fn get_f64(name: &'static str, captures: &Captures<'_>, i: usize) -> Result<f64,
     raw.as_str().parse::<f64>().map_err(Error::InvalidF64)
 }
 
-impl Command<'_> {
-    fn parse(animation: &str) -> Result<Command, Error> {
+impl AnimationPlan<'_> {
+    fn parse(animation: &str) -> Result<AnimationPlan, Error> {
         const ANIMATE: &str = r"^Animate\s+(\w+)\s*:\s*";
         const SPRING: &str = r"(?:\s+using\s+([\w-]+))?";
         const VARIATION: &str = r"(?:\s+vary\s+(\S+)\s+to\s+(\S+))?";
@@ -99,22 +100,22 @@ impl Command<'_> {
         Ok(if let Some(captures) = rotate.captures_at(animation, 0) {
             let nv = NameAndVariation::from_captures(&captures, 1, 3, 4, 5)?;
             let degrees = get_f64("degrees", &captures, 2)?;
-            Command::RotateDegrees(nv, degrees)
+            AnimationPlan::RotateDegrees(nv, degrees)
         } else if let Some(captures) = scale.captures_at(animation, 0) {
             let nv = NameAndVariation::from_captures(&captures, 1, 4, 5, 6)?;
             let from = get_f64("from", &captures, 2)?;
             let to = get_f64("to", &captures, 3)?;
-            Command::ScaleFromTo(nv, from, to)
+            AnimationPlan::ScaleFromTo(nv, from, to)
         } else if let Some(captures) = only_name.captures_at(animation, 0) {
             eprintln!("only_name captures\n{captures:?}");
             let nv = NameAndVariation::from_captures(&captures, 1, 3, 4, 5)?;
             let command = captures.get(2).map(|m| m.as_str()).unwrap_or("none");
             match command {
-                "none" => Command::None(nv),
-                "pulse" => Command::PulseParts(nv),
-                "pulse-whole" => Command::PulseWhole(nv),
-                "twirl" => Command::TwirlParts(nv),
-                "twirl-whole" => Command::TwirlWhole(nv),
+                "none" => AnimationPlan::None(nv),
+                "pulse" => AnimationPlan::PulseParts(nv),
+                "pulse-whole" => AnimationPlan::PulseWhole(nv),
+                "twirl" => AnimationPlan::TwirlParts(nv),
+                "twirl-whole" => AnimationPlan::TwirlWhole(nv),
                 _ => return Err(Error::UnrecognizedCommand),
             }
         } else {
@@ -122,49 +123,49 @@ impl Command<'_> {
         })
     }
 
-    pub(crate) fn animation<'a>(&self, to_lottie: &'a dyn ToLottie) -> Animation<'a> {
+    pub(crate) fn legacy_animation<'a>(&self, to_lottie: &'a dyn ToLottie) -> Animation<'a> {
         match self {
-            Command::PulseParts(..) => Animation::PulseParts(to_lottie),
-            Command::PulseWhole(..) => Animation::PulseWhole(to_lottie),
-            Command::TwirlParts(..) => Animation::TwirlParts(to_lottie),
-            Command::TwirlWhole(..) => Animation::TwirlWhole(to_lottie),
+            AnimationPlan::PulseParts(..) => Animation::PulseParts(to_lottie),
+            AnimationPlan::PulseWhole(..) => Animation::PulseWhole(to_lottie),
+            AnimationPlan::TwirlParts(..) => Animation::TwirlParts(to_lottie),
+            AnimationPlan::TwirlWhole(..) => Animation::TwirlWhole(to_lottie),
             _ => Animation::None(to_lottie),
         }
     }
 
     pub fn icon_name(&self) -> &str {
         match self {
-            Command::None(nv, ..)
-            | Command::RotateDegrees(nv, ..)
-            | Command::ScaleFromTo(nv, ..)
-            | Command::PulseWhole(nv, ..)
-            | Command::PulseParts(nv, ..)
-            | Command::TwirlWhole(nv, ..)
-            | Command::TwirlParts(nv, ..) => nv.icon_name,
+            AnimationPlan::None(nv, ..)
+            | AnimationPlan::RotateDegrees(nv, ..)
+            | AnimationPlan::ScaleFromTo(nv, ..)
+            | AnimationPlan::PulseWhole(nv, ..)
+            | AnimationPlan::PulseParts(nv, ..)
+            | AnimationPlan::TwirlWhole(nv, ..)
+            | AnimationPlan::TwirlParts(nv, ..) => nv.icon_name,
         }
     }
 
     pub fn spring(&self) -> Option<Spring> {
         match self {
-            Command::None(nv, ..)
-            | Command::RotateDegrees(nv, ..)
-            | Command::ScaleFromTo(nv, ..)
-            | Command::PulseWhole(nv, ..)
-            | Command::PulseParts(nv, ..)
-            | Command::TwirlWhole(nv, ..)
-            | Command::TwirlParts(nv, ..) => nv.spring,
+            AnimationPlan::None(nv, ..)
+            | AnimationPlan::RotateDegrees(nv, ..)
+            | AnimationPlan::ScaleFromTo(nv, ..)
+            | AnimationPlan::PulseWhole(nv, ..)
+            | AnimationPlan::PulseParts(nv, ..)
+            | AnimationPlan::TwirlWhole(nv, ..)
+            | AnimationPlan::TwirlParts(nv, ..) => nv.spring,
         }
     }
 
     pub fn variation(&self) -> Result<(UserLocation, UserLocation), Error> {
         let nv = match self {
-            Command::None(nv, ..)
-            | Command::RotateDegrees(nv, ..)
-            | Command::ScaleFromTo(nv, ..)
-            | Command::PulseWhole(nv, ..)
-            | Command::PulseParts(nv, ..)
-            | Command::TwirlWhole(nv, ..)
-            | Command::TwirlParts(nv, ..) => nv,
+            AnimationPlan::None(nv, ..)
+            | AnimationPlan::RotateDegrees(nv, ..)
+            | AnimationPlan::ScaleFromTo(nv, ..)
+            | AnimationPlan::PulseWhole(nv, ..)
+            | AnimationPlan::PulseParts(nv, ..)
+            | AnimationPlan::TwirlWhole(nv, ..)
+            | AnimationPlan::TwirlParts(nv, ..) => nv,
         };
         let from = nv
             .vary_from
@@ -192,11 +193,11 @@ fn parse_location(raw: &str) -> Result<UserLocation, Error> {
         .collect::<Result<_, _>>()
 }
 
-pub fn parse_command<'a, 'b>(
+pub fn parse_plan<'a, 'b>(
     font: &'a FontRef,
     command: &'b str,
-) -> Result<(Command<'b>, GlyphShape<'a>), Error> {
-    let command = Command::parse(command)?;
+) -> Result<(AnimationPlan<'b>, GlyphShape<'a>), Error> {
+    let command = AnimationPlan::parse(command)?;
 
     let gid = icon_name_to_gid(font, command.icon_name()).map_err(Error::IconNameError)?;
 
@@ -213,7 +214,7 @@ pub fn parse_command<'a, 'b>(
 mod tests {
     use crate::spring::Spring;
 
-    use super::{Command, NameAndVariation};
+    use super::{AnimationPlan, NameAndVariation};
 
     impl<'a> From<&'a str> for NameAndVariation<'a> {
         fn from(icon_name: &'a str) -> Self {
@@ -261,37 +262,38 @@ mod tests {
 
     #[test]
     fn parse_rotate_with_spring() {
-        let cmd = Command::parse("Animate settings: rotate 360 degrees using expressive-spatial")
-            .unwrap();
+        let cmd =
+            AnimationPlan::parse("Animate settings: rotate 360 degrees using expressive-spatial")
+                .unwrap();
         assert_eq!(
-            Command::RotateDegrees(("settings", Spring::expressive_spatial()).into(), 360.0),
+            AnimationPlan::RotateDegrees(("settings", Spring::expressive_spatial()).into(), 360.0),
             cmd
         );
     }
 
     #[test]
     fn parse_scale() {
-        let cmd = Command::parse("Animate check_circle: scale 0 to 100").unwrap();
+        let cmd = AnimationPlan::parse("Animate check_circle: scale 0 to 100").unwrap();
         assert_eq!(
-            Command::ScaleFromTo(("check_circle").into(), 0.0, 100.0),
+            AnimationPlan::ScaleFromTo(("check_circle").into(), 0.0, 100.0),
             cmd
         );
     }
 
     #[test]
     fn parse_pulse() {
-        let cmd = Command::parse("Animate close: pulse").unwrap();
-        assert_eq!(Command::PulseParts(("close").into()), cmd);
+        let cmd = AnimationPlan::parse("Animate close: pulse").unwrap();
+        assert_eq!(AnimationPlan::PulseParts(("close").into()), cmd);
     }
 
     #[test]
     fn parse_rotate_with_variation() {
-        let cmd = Command::parse(
+        let cmd = AnimationPlan::parse(
             "Animate settings: rotate 360 degrees using smooth-spatial vary blah:99 to blah:101",
         )
         .unwrap();
         assert_eq!(
-            Command::RotateDegrees(
+            AnimationPlan::RotateDegrees(
                 ("settings", Spring::smooth_spatial(), "blah:99", "blah:101").into(),
                 360.0
             ),
@@ -301,22 +303,25 @@ mod tests {
 
     #[test]
     fn parse_minimal_twirl() {
-        let cmd = Command::parse("Animate an_icon: twirl-whole").unwrap();
-        assert_eq!(Command::TwirlWhole(("an_icon").into()), cmd);
+        let cmd = AnimationPlan::parse("Animate an_icon: twirl-whole").unwrap();
+        assert_eq!(AnimationPlan::TwirlWhole(("an_icon").into()), cmd);
     }
 
     #[test]
     fn parse_only_variation() {
-        let cmd = Command::parse("Animate an_icon: vary FILL:0 to FILL:1").unwrap();
-        assert_eq!(Command::None(("an_icon", "FILL:0", "FILL:1").into()), cmd);
+        let cmd = AnimationPlan::parse("Animate an_icon: vary FILL:0 to FILL:1").unwrap();
+        assert_eq!(
+            AnimationPlan::None(("an_icon", "FILL:0", "FILL:1").into()),
+            cmd
+        );
     }
 
     #[test]
     fn parse_scale_with_variation_and_spring() {
-        let cmd = Command::parse("Animate check_circle: scale 0 to 100 using expressive-spatial vary wght:400,FILL:1 to wght:700,FILL:0")
+        let cmd = AnimationPlan::parse("Animate check_circle: scale 0 to 100 using expressive-spatial vary wght:400,FILL:1 to wght:700,FILL:0")
             .unwrap();
         assert_eq!(
-            Command::ScaleFromTo(
+            AnimationPlan::ScaleFromTo(
                 (
                     "check_circle",
                     Spring::expressive_spatial(),
@@ -333,10 +338,10 @@ mod tests {
 
     #[test]
     fn parse_pulse_with_variation_and_spring() {
-        let cmd =
-            Command::parse("Animate close: pulse using standard vary FILL:0 to FILL:1").unwrap();
+        let cmd = AnimationPlan::parse("Animate close: pulse using standard vary FILL:0 to FILL:1")
+            .unwrap();
         assert_eq!(
-            Command::PulseParts(("close", Spring::standard(), "FILL:0", "FILL:1").into()),
+            AnimationPlan::PulseParts(("close", Spring::standard(), "FILL:0", "FILL:1").into()),
             cmd
         );
     }

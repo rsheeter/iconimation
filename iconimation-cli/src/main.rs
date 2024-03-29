@@ -1,9 +1,11 @@
 use std::str::FromStr;
 use std::{fs, path::Path};
 
+use bodymovin::Bodymovin as Lottie;
 use clap::Parser;
-use iconimation::command::parse_command;
-use iconimation::generate_lottie;
+use iconimation::android::AnimatedVectorDrawable;
+use iconimation::ir::{Animation, FromAnimation};
+use iconimation::plan::parse_plan;
 use skrifa::instance::Location;
 use skrifa::raw::types::InvalidTag;
 use skrifa::raw::FontRef;
@@ -25,8 +27,12 @@ struct Args {
     font: String,
 
     #[arg(short, long)]
-    #[clap(default_value = "output.json")]
-    out_file: String,
+    #[clap(default_value = "lottie.json")]
+    lottie_output: String,
+
+    #[arg(short, long)]
+    #[clap(default_value = "avd.xml")]
+    android_output: String,
 }
 
 #[derive(Debug, Error)]
@@ -76,17 +82,23 @@ fn main() {
     let font_bytes = fs::read(font_file).unwrap();
     let font = FontRef::new(&font_bytes).unwrap();
 
-    let (command, glyph_shape) = parse_command(&font, &args.command).unwrap();
+    let (plan, glyph_shape) = parse_plan(&font, &args.command).unwrap();
+    let animation = Animation::of_icon(&plan, &glyph_shape).unwrap();
 
-    let font_drawbox = glyph_shape.drawbox();
-    eprintln!("font_drawbox {:?}", font_drawbox);
-
-    let lottie = generate_lottie(&font, &command, &glyph_shape).unwrap();
-
+    let lottie = Lottie::from_animation(&animation).unwrap();
     fs::write(
-        &args.out_file,
+        &args.lottie_output,
         serde_json::to_string_pretty(&lottie).unwrap(),
     )
     .unwrap();
-    eprintln!("Wrote {}", args.out_file);
+    eprintln!("Wrote Lottie {}", args.lottie_output);
+
+    let avd = AnimatedVectorDrawable::from_animation(&animation).unwrap();
+    fs::write(
+        &args.android_output,
+        // TODO: AVD isn't json
+        serde_json::to_string_pretty(&avd).unwrap(),
+    )
+    .unwrap();
+    eprintln!("Wrote AnimatedVectorDrawable {}", args.lottie_output);
 }
