@@ -4,9 +4,9 @@ use bodymovin::{
     layers::{AnyLayer, ShapeMixin},
     properties::{
         Bezier2d, BezierEase, ControlPoint2d, MultiDimensionalKeyframe, Property, ShapeKeyframe,
-        ShapeValue, SplittableMultiDimensional, Value,
+        ShapeValue, Value,
     },
-    shapes::{AnyShape, Group, SubPath, Transform},
+    shapes::{AnyShape, Fill, Group, SubPath, Transform},
     Bodymovin as Lottie,
 };
 use kurbo::{BezPath, PathEl, Point, Shape};
@@ -21,7 +21,7 @@ impl FromAnimation for Lottie {
     type Err = LottieError;
 
     fn from_animation(animation: &crate::ir::Animation) -> Result<Self, Self::Err> {
-        let root_group = to_lottie_group(animation, &animation.root)?;
+        let root_group = to_lottie_group(&animation.root)?;
         Ok(Lottie {
             in_point: 0.0,
             out_point: animation.frames,
@@ -31,13 +31,6 @@ impl FromAnimation for Lottie {
             layers: vec![AnyLayer::Shape(bodymovin::layers::Shape {
                 in_point: 0.0,
                 out_point: 60.0, // 60fps total animation = 1s
-                transform: bodymovin::helpers::Transform {
-                    position: SplittableMultiDimensional::Uniform(Property {
-                        value: Value::Fixed(vec![animation.width / 2.0, animation.height / 2.0]),
-                        ..Default::default()
-                    }),
-                    ..Default::default()
-                },
                 mixin: ShapeMixin {
                     shapes: vec![AnyShape::Group(root_group)],
                     ..Default::default()
@@ -49,16 +42,13 @@ impl FromAnimation for Lottie {
     }
 }
 
-fn to_lottie_group(
-    animation: &crate::ir::Animation,
-    group: &ir::Group,
-) -> Result<Group, LottieError> {
+fn to_lottie_group(group: &ir::Group) -> Result<Group, LottieError> {
     // de facto standard for Lottie is groups contains shape(s), fill, transform
     let mut items: Vec<_> = group
         .children
         .iter()
         .map(|e| match e {
-            Element::Group(g) => to_lottie_group(animation, g).map(|g| vec![AnyShape::Group(g)]),
+            Element::Group(g) => to_lottie_group(g).map(|g| vec![AnyShape::Group(g)]),
             Element::Shape(s) => {
                 to_lottie_subpath(s).map(|s| s.into_iter().map(AnyShape::Shape).collect())
             }
@@ -68,8 +58,15 @@ fn to_lottie_group(
         .flatten()
         .collect();
 
-    items.push(AnyShape::Fill(Default::default()));
-    items.push(AnyShape::Transform(to_lottie_transform(animation, group)));
+    let mut fill = Fill::default();
+    if let Some((r, g, b)) = group.fill {
+        fill.color = Property {
+            value: Value::Fixed(vec![r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0]),
+            ..Default::default()
+        };
+    }
+    items.push(AnyShape::Fill(fill));
+    items.push(AnyShape::Transform(to_lottie_transform(group)));
 
     Ok(Group {
         items,
@@ -77,10 +74,11 @@ fn to_lottie_group(
     })
 }
 
-fn to_lottie_transform(animation: &crate::ir::Animation, group: &ir::Group) -> Transform {
+fn to_lottie_transform(group: &ir::Group) -> Transform {
     let mut transform = Transform::default();
-    transform.anchor_point.value =
-        Value::Fixed(vec![animation.width / 2.0, animation.height / 2.0]);
+    let (center_x, center_y) = (group.center.x, group.center.y);
+    eprintln!("to_lottie_transform center {:?}", group.center);
+    transform.anchor_point.value = Value::Fixed(vec![center_x, center_y]);
 
     transform.rotation.animated = group.rotate.is_animated() as i8;
     transform.rotation.value = if group.rotate.is_animated() {
@@ -127,7 +125,10 @@ fn to_lottie_transform(animation: &crate::ir::Animation, group: &ir::Group) -> T
                 .iter()
                 .map(|keyframe| MultiDimensionalKeyframe {
                     start_time: keyframe.frame,
-                    start_value: Some(vec![keyframe.value.x, keyframe.value.y]),
+                    start_value: Some(vec![
+                        center_x + keyframe.value.x,
+                        center_y + keyframe.value.y,
+                    ]),
                     bezier: Some(default_ease()),
                     ..Default::default()
                 })
@@ -135,7 +136,7 @@ fn to_lottie_transform(animation: &crate::ir::Animation, group: &ir::Group) -> T
         )
     } else {
         let value = group.translate.earliest().value;
-        Value::Fixed(vec![value.x, value.y])
+        Value::Fixed(vec![center_x + value.x, center_y + value.y])
     };
 
     transform

@@ -14,10 +14,6 @@ use thiserror::Error;
 
 #[derive(Parser)]
 struct Args {
-    /// Whether to emit additional debug info
-    #[arg(long)]
-    debug: bool,
-
     #[arg(short, long)]
     #[clap(required(true))]
     command: String,
