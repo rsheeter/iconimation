@@ -139,16 +139,24 @@ impl Group {
 }
 
 fn to_avd_group(group: &ir::Group) -> Group {
+    let mut children = Vec::with_capacity(group.children.len());
+    for i in 0..group.children.len() {
+        let next = &group.children[i];
+        match next {
+            ir::Element::Group(g) => children.push(Element::Group(to_avd_group(g))),
+            ir::Element::Shape(s) => {
+                if let Some(Element::Path(p)) = children.last_mut() {
+                    // glue paths back together because unlike Lottie independent AVD paths do *not* cut holes in each other
+                    p.path += &s.earliest().value.to_svg();
+                } else {
+                    children.push(Element::Path(to_avd_path(group.fill, s)));
+                }
+            }
+        }
+    }
     Group {
         _pivot: group.center,
-        children: group
-            .children
-            .iter()
-            .map(|c| match c {
-                ir::Element::Group(g) => Element::Group(to_avd_group(g)),
-                ir::Element::Shape(s) => Element::Path(to_avd_path(group.fill, s)),
-            })
-            .collect(),
+        children,
     }
 }
 
