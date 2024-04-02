@@ -5,10 +5,7 @@ use std::{str::FromStr, sync::OnceLock};
 use regex::{Captures, Regex};
 use skrifa::{raw::FontRef, MetadataProvider, Tag};
 
-use crate::{
-    animate_legacy::Animation, error::Error, ligate::icon_name_to_gid, spring::Spring, GlyphShape,
-    ToLottie,
-};
+use crate::{error::Error, ligate::icon_name_to_gid, spring::Spring, GlyphShape};
 
 #[derive(Debug, PartialEq)]
 pub struct NameAndVariation<'a> {
@@ -121,16 +118,6 @@ impl AnimationPlan<'_> {
         } else {
             return Err(Error::UnrecognizedCommand);
         })
-    }
-
-    pub(crate) fn legacy_animation<'a>(&self, to_lottie: &'a dyn ToLottie) -> Animation<'a> {
-        match self {
-            AnimationPlan::PulseParts(..) => Animation::PulseParts(to_lottie),
-            AnimationPlan::PulseWhole(..) => Animation::PulseWhole(to_lottie),
-            AnimationPlan::TwirlParts(..) => Animation::TwirlParts(to_lottie),
-            AnimationPlan::TwirlWhole(..) => Animation::TwirlWhole(to_lottie),
-            _ => Animation::None(to_lottie),
-        }
     }
 
     pub fn icon_name(&self) -> &str {
