@@ -15,8 +15,8 @@ use wasm_bindgen::prelude::*;
 
 #[derive(Serialize)]
 struct Animations {
-    lottie: Lottie,
-    avd: AnimatedVectorDrawable,
+    lottie: String,
+    avd: String,
     debug: String,
 }
 
@@ -35,8 +35,11 @@ pub fn generate_animation(raw_font: &ArrayBuffer, raw_command: String) -> Result
         .map_err(|e| format!("AVD generation failed: {e}"))?;
 
     Ok(serde_json::to_string_pretty(&Animations {
-        lottie,
-        avd,
+        lottie: serde_json::to_string_pretty(&lottie)
+            .map_err(|e| format!("Lottie to json failed: {e}"))?,
+        avd: avd
+            .to_avd_xml()
+            .map_err(|e| format!("AVD to xml failed: {e}"))?,
         debug: "".to_string(),
     })
     .unwrap())

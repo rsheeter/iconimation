@@ -90,11 +90,6 @@ fn main() {
     eprintln!("Wrote Lottie {}", args.lottie_output);
 
     let avd = AnimatedVectorDrawable::from_animation(&animation).unwrap();
-    fs::write(
-        &args.android_output,
-        // TODO: AVD isn't json
-        serde_json::to_string_pretty(&avd).unwrap(),
-    )
-    .unwrap();
-    eprintln!("Wrote AnimatedVectorDrawable {}", args.lottie_output);
+    fs::write(&args.android_output, avd.to_avd_xml().unwrap()).unwrap();
+    eprintln!("Wrote AnimatedVectorDrawable {}", args.android_output);
 }
