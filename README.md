@@ -20,20 +20,14 @@ Don't count on anything working correctly.
     # 3) git@github.com:rsheeter/bodymovin-rs.git is cloned sibling to the current directory
    
 
-    # I definitely need a Lottie that doesn't do anything!
-    $ cargo run -- --icon 0xeba8 --font '../material-design-icons/variablefont/MaterialSymbolsOutlined[FILL,GRAD,opsz,wght].ttf' --animation none
-
     # A spin perhaps?
-    $ cargo run -- --icon 0xeba8 --font '../material-design-icons/variablefont/MaterialSymbolsOutlined[FILL,GRAD,opsz,wght].ttf' --animation twirl-parts --spring
-
-    # I have my own template!
-    $ cargo run -- --icon 0xeba8 --font '../material-design-icons/variablefont/MaterialSymbolsOutlined[FILL,GRAD,opsz,wght].ttf' --animation none --template resources/templates/ScaleRotate.json
+    $ cargo run -- -c "Animate more_horiz: pulse" -f ../material-design-icons/variablefont/MaterialSymbolsOutlined\[FILL\,GRAD\,opsz\,wght\].ttf  
     ```
 
 1. Try it out
    * https://lottiefiles.github.io/lottie-docs/playground/json_editor/ perhaps?
    * To generate a lottie and place it on the copy buffer so you can paste it into ^
-   `$ cargo run -- --icon 0xeba8 --font '../material-design-icons/variablefont/MaterialSymbolsOutlined[FILL,GRAD,opsz,wght].ttf' --animation twirl-parts  && cat output.json | xclip -selection c`
+   `$ cargo run -- -c "Animate more_horiz: pulse" -f ../material-design-icons/variablefont/MaterialSymbolsOutlined\[FILL\,GRAD\,opsz\,wght\].ttf && cat lottie.json | xclip -selection c`
 
    ![Playground](resources/images/playground.png)
 
