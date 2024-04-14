@@ -1,21 +1,12 @@
 [package]
-name = "iconimation-cli"
+name = "iconimation-viz"
 version = "0.1.0"
 edition = "2021"
-
-default-run = "iconimation-cli"  # feels like the wrong place...
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 iconimation = { path = "../iconimation" }
+kurbo.workspace = true
 
 clap.workspace = true
-
-serde_json.workspace = true
-
-kurbo.workspace = true
-skrifa.workspace = true
-bodymovin.workspace = true
-
-thiserror.workspace = true

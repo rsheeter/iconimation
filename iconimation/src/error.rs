@@ -76,3 +76,11 @@ pub enum LottieError {
 
 #[derive(Debug, Error)]
 pub enum AndroidError {}
+
+#[derive(Debug, Error)]
+pub enum CubicApproximationError {
+    #[error("Unrecognized spring")]
+    UnrecognizedSpring,
+    #[error("Input took too long to reach equilibrium")]
+    RanTooLong,
+}

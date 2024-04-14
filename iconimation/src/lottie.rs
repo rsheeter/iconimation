@@ -77,7 +77,6 @@ fn to_lottie_group(group: &ir::Group) -> Result<Group, LottieError> {
 fn to_lottie_transform(group: &ir::Group) -> Transform {
     let mut transform = Transform::default();
     let (center_x, center_y) = (group.center.x, group.center.y);
-    eprintln!("to_lottie_transform center {:?}", group.center);
     transform.anchor_point.value = Value::Fixed(vec![center_x, center_y]);
 
     transform.rotation.animated = group.rotate.is_animated() as i8;
