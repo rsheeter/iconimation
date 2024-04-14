@@ -217,9 +217,8 @@ impl AnimatedValueType {
 
 #[cfg(test)]
 mod tests {
-    use ordered_float::OrderedFloat;
-
     use crate::spring::AnimatedValueType;
+    use ordered_float::OrderedFloat;
 
     use super::AnimatedValue;
     use super::Spring;

@@ -15,6 +15,7 @@ use write_fonts::pens::{BezPathPen, TransformPen};
 use crate::{
     bezop::{y_up_to_y_down, ContainedPoint},
     error::AnimationError,
+    nth_group_color,
     plan::AnimationPlan,
     GlyphShape,
 };
@@ -254,25 +255,6 @@ fn group_parts(shapes: Vec<Keyframed<BezPath>>) -> Vec<Group> {
             }
         })
         .collect()
-}
-
-/// Hackery to support debugging; it's useful to see the groups
-fn nth_group_color(n: usize) -> (u8, u8, u8) {
-    // Taken from https://m2.material.io/design/color/the-color-system.html#tools-for-picking-colors
-    // "2014 Material Design color palettes"
-    const COLORS: &[(u8, u8, u8)] = &[
-        (0xEF, 0x53, 0x50),
-        (0xEC, 0x40, 0x7A),
-        (0xAB, 0x47, 0xBC),
-        (0xE5, 0x39, 0x35),
-        (0xD8, 0x1B, 0x60),
-        (0x8E, 0x24, 0xAA),
-        (0xC6, 0x28, 0x28),
-        (0xAD, 0x14, 0x57),
-        (0x6A, 0x1B, 0x9A),
-    ];
-
-    COLORS[n % COLORS.len()]
 }
 
 impl Group {

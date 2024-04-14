@@ -8,6 +8,7 @@ pub mod ligate;
 pub mod lottie;
 pub mod plan;
 pub mod spring;
+pub mod spring2cubic;
 
 use std::fmt::Debug;
 
@@ -68,6 +69,9 @@ impl<'a> GlyphShape<'a> {
     }
 }
 
+/// Lists the path commands, e.g. MCLZ, used by the path.
+///
+/// Paths with the same commands are interpolation compatible.
 fn path_commands(bez: &BezPath) -> String {
     bez.elements()
         .iter()
@@ -79,6 +83,25 @@ fn path_commands(bez: &BezPath) -> String {
             PathEl::QuadTo(..) => 'Q',
         })
         .collect()
+}
+
+/// Hackery to support debugging; it's useful to see the groups
+pub fn nth_group_color(n: usize) -> (u8, u8, u8) {
+    // Taken from https://m2.material.io/design/color/the-color-system.html#tools-for-picking-colors
+    // "2014 Material Design color palettes"
+    const COLORS: &[(u8, u8, u8)] = &[
+        (0xEF, 0x53, 0x50),
+        (0xEC, 0x40, 0x7A),
+        (0xAB, 0x47, 0xBC),
+        (0xE5, 0x39, 0x35),
+        (0xD8, 0x1B, 0x60),
+        (0x8E, 0x24, 0xAA),
+        (0xC6, 0x28, 0x28),
+        (0xAD, 0x14, 0x57),
+        (0x6A, 0x1B, 0x9A),
+    ];
+
+    COLORS[n % COLORS.len()]
 }
 
 #[cfg(test)]
