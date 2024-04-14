@@ -256,6 +256,7 @@ fn group_parts(shapes: Vec<Keyframed<BezPath>>) -> Vec<Group> {
         .collect()
 }
 
+/// Hackery to support debugging; it's useful to see the groups
 fn nth_group_color(n: usize) -> (u8, u8, u8) {
     // Taken from https://m2.material.io/design/color/the-color-system.html#tools-for-picking-colors
     // "2014 Material Design color palettes"
