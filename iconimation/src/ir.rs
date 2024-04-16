@@ -1,8 +1,8 @@
 //! An intermediate model of simple animation that can be converted to a playback format
 
-use std::collections::HashSet;
+use std::{collections::HashSet, fmt::Debug};
 
-use kurbo::{Affine, BezPath, PathEl, Point, Rect, Shape as KShape, Vec2};
+use kurbo::{Affine, BezPath, CubicBez, PathEl, Point, Rect, Shape as KShape, Vec2};
 use ordered_float::OrderedFloat;
 use skrifa::{
     instance::{Location, Size},
@@ -17,6 +17,8 @@ use crate::{
     error::AnimationError,
     nth_group_color,
     plan::AnimationPlan,
+    spring::{AnimatedValue, AnimatedValueType, Spring},
+    spring2cubic::cubic_approximation,
     GlyphShape,
 };
 
@@ -102,9 +104,9 @@ impl Default for Group {
             children: Default::default(),
             center: Point::default(),
             fill: None,
-            translate: Keyframed::new(0.0, Vec2::default()),
-            scale: Keyframed::new(0.0, (100.0, 100.0)),
-            rotate: Keyframed::new(0.0, 0.0),
+            translate: Keyframed::new(0.0, Vec2::default(), None),
+            scale: Keyframed::new(0.0, (100.0, 100.0), None),
+            rotate: Keyframed::new(0.0, 0.0, None),
         }
     }
 }
@@ -114,18 +116,22 @@ impl Group {
         // Variation is apply when creating a shape; here apply transform-based animation
         match plan {
             AnimationPlan::None(..) => (),
-            AnimationPlan::TwirlWhole(..) => self.rotate = twirl(0.0, container.frames, 0),
+            AnimationPlan::TwirlWhole(..) => {
+                self.rotate = twirl(plan.spring(), 0.0, container.frames, 0)
+            }
             AnimationPlan::TwirlParts(..) => {
                 self.group_parts();
                 for (i, g) in self.mutable_child_groups().enumerate() {
-                    g.rotate = twirl(0.0, container.frames, i);
+                    g.rotate = twirl(plan.spring(), 0.0, container.frames, i);
                 }
             }
-            AnimationPlan::PulseWhole(..) => self.scale = pulse(0.0, container.frames, 0),
+            AnimationPlan::PulseWhole(..) => {
+                self.scale = pulse(plan.spring(), 0.0, container.frames, 0)
+            }
             AnimationPlan::PulseParts(..) => {
                 self.group_parts();
                 for (i, g) in self.mutable_child_groups().enumerate() {
-                    g.scale = pulse(0.0, container.frames, i);
+                    g.scale = pulse(plan.spring(), 0.0, container.frames, i);
                 }
             }
             _ => todo!("Not implemented: {plan:?}"),
@@ -141,28 +147,32 @@ impl Group {
 }
 
 /// Produces keyframes suitable for use with [`Group::rotate`]
-fn twirl(start: f64, end: f64, nth_group: usize) -> Keyframed<f64> {
+fn twirl(spring: Option<Spring>, start: f64, end: f64, nth_group: usize) -> Keyframed<f64> {
     assert!(end > start);
     let nth_group = nth_group as f64;
-    vec![
+    let mut kf: Keyframed<f64> = vec![
         (0.2 * (end - start) * nth_group, 0.0),
         (0.2 * (end - start) * (nth_group + 2.0), 360.0),
     ]
     .try_into()
-    .unwrap()
+    .unwrap();
+    kf.spring = spring;
+    kf
 }
 
 /// Produces keyframes suitable for use with [`Group::scale`]
-fn pulse(start: f64, end: f64, nth_group: usize) -> Keyframed<(f64, f64)> {
+fn pulse(spring: Option<Spring>, start: f64, end: f64, nth_group: usize) -> Keyframed<(f64, f64)> {
     assert!(end > start);
     let nth_group = nth_group as f64;
-    vec![
+    let mut kf: Keyframed<(f64, f64)> = vec![
         (0.2 * (end - start) * nth_group, (100.0, 100.0)),
         (0.2 * (end - start) * (nth_group + 1.0), (150.0, 150.0)),
         (0.2 * (end - start) * (nth_group + 2.0), (100.0, 100.0)),
     ]
     .try_into()
-    .unwrap()
+    .unwrap();
+    kf.spring = spring;
+    kf
 }
 
 /// Piece-wise animation wants to animate "parts" as the eye perceives them; try to so group
@@ -313,15 +323,25 @@ pub(crate) enum Element {
 ///
 /// Pops into existence at min(time), disappears at max(time).
 #[derive(Debug, Clone)]
-pub struct Keyframed<T>(Vec<Keyframe<T>>);
+pub(crate) struct Keyframed<T> {
+    keyframes: Vec<Keyframe<T>>,
+    pub(crate) spring: Option<Spring>,
+}
 
-impl<T> Keyframed<T> {
-    pub(crate) fn new(frame: f64, value: T) -> Self {
-        Self(vec![Keyframe::new(frame, value)])
+impl<T> Keyframed<T>
+where
+    T: Clone,
+    Keyframe<T>: MotionValue,
+{
+    pub(crate) fn new(frame: f64, value: T, spring: impl Into<Option<Spring>>) -> Self {
+        Self {
+            keyframes: vec![Keyframe::new(frame, value)],
+            spring: spring.into(),
+        }
     }
 
     pub(crate) fn earliest(&self) -> &Keyframe<T> {
-        &self.0[0]
+        &self.keyframes[0]
     }
 
     pub(crate) fn is_animated(&self) -> bool {
@@ -329,19 +349,116 @@ impl<T> Keyframed<T> {
     }
 
     pub(crate) fn len(&self) -> usize {
-        self.0.len()
+        self.keyframes.len()
     }
 
     pub(crate) fn iter(&self) -> impl Iterator<Item = &Keyframe<T>> {
-        self.0.iter()
+        self.keyframes.iter()
     }
 
     pub(crate) fn push(&mut self, keyframe: Keyframe<T>) {
-        if let Some(pos) = self.0.iter().position(|kf| kf.frame == keyframe.frame) {
-            self.0[pos] = keyframe;
+        if let Some(pos) = self
+            .keyframes
+            .iter()
+            .position(|kf| kf.frame == keyframe.frame)
+        {
+            self.keyframes[pos] = keyframe;
         } else {
-            self.0.push(keyframe);
+            self.keyframes.push(keyframe);
         }
+    }
+
+    /// Iterate keyframes plus the motion curve to use to get from the prior keyframe to this one
+    ///
+    /// If a spring was assigned new keyframes are generated to match the spring.
+    pub(crate) fn motion(&self, frame_rate: f64, value_type: AnimatedValueType) -> Motion<T> {
+        Motion::new(self, frame_rate, value_type)
+    }
+}
+
+const DEFAULT_EASE: CubicBez = CubicBez {
+    p0: Point { x: 0.0, y: 0.0 },
+    p1: Point { x: 0.4, y: 0.0 },
+    p2: Point { x: 0.6, y: 1.0 },
+    p3: Point { x: 1.0, y: 1.0 },
+};
+
+pub(crate) struct Motion<T> {
+    keyframes: Vec<Keyframe<T>>,
+    ease: Vec<CubicBez>,
+}
+
+impl<T> Motion<T>
+where
+    T: Clone,
+    Keyframe<T>: MotionValue,
+{
+    fn new(source: &Keyframed<T>, frame_rate: f64, value_type: AnimatedValueType) -> Self {
+        let (keyframes, ease) = if source.spring.is_some() && source.len() > 1 {
+            let mut ease = vec![DEFAULT_EASE]; // default => 0
+            let mut new_keyframes = vec![source.keyframes[0].clone()];
+            let spring = source.spring.unwrap();
+            for (i, keyframes) in source.keyframes.windows(2).enumerate() {
+                let kf1 = &keyframes[0];
+                let kf2 = &keyframes[1];
+
+                let v1 = kf1.reference_value(i);
+                let v2 = kf2.reference_value(i + 1);
+                let animation = AnimatedValue::new(v1, v2, value_type);
+                let cubics = cubic_approximation(frame_rate, animation, spring).expect("Cubics!");
+
+                // cubics is the sequence of steps to reach kf2 from kf1
+                // the endpoint of each cubic gives the new keyframe, the cubic becomes the easing
+                eprintln!("Cubics");
+                for cubic in cubics {
+                    let frame_offset = cubic.p3.x - cubic.p0.x;
+                    eprintln!("  +frames {frame_offset}, {cubic:?}");
+                    let frame = frame_offset + new_keyframes.last().unwrap().frame;
+                    new_keyframes.push(Keyframe::new(frame, kf2.scaled(cubic.p3.y, i).value));
+                    ease.push(cubic);
+                }
+            }
+            (new_keyframes, ease)
+        } else {
+            (source.keyframes.clone(), Default::default())
+        };
+        Self { keyframes, ease }
+    }
+
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (CubicBez, &Keyframe<T>)> {
+        MotionIter::new(self)
+    }
+}
+
+struct MotionIter<'a, T> {
+    motion: &'a Motion<T>,
+    idx: usize,
+}
+
+impl<'a, T> MotionIter<'a, T> {
+    fn new(motion: &'a Motion<T>) -> Self {
+        Self { motion, idx: 0 }
+    }
+}
+
+impl<'a, T> Iterator for MotionIter<'a, T> {
+    type Item = (CubicBez, &'a Keyframe<T>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let result = self.motion.keyframes.get(self.idx).map(|k| {
+            (
+                self.motion
+                    .ease
+                    .get(self.idx)
+                    .copied()
+                    .unwrap_or(DEFAULT_EASE),
+                k,
+            )
+        });
+        if result.is_some() {
+            self.idx += 1;
+        }
+        result
     }
 }
 
@@ -359,12 +476,13 @@ impl<T> TryFrom<Vec<(f64, T)>> for Keyframed<T> {
                 return Err(AnimationError::MultipleValuesForFrame(value[i].0));
             }
         }
-        Ok(Keyframed(
-            value
+        Ok(Keyframed {
+            keyframes: value
                 .into_iter()
                 .map(|(frame, value)| Keyframe::new(frame, value))
                 .collect(),
-        ))
+            spring: None,
+        })
     }
 }
 
@@ -398,6 +516,7 @@ impl Keyframed<BezPath> {
                 glyph_shape.gid,
                 &glyph_shape.glyph,
             )?,
+            Spring::expressive_non_spatial(),
         );
 
         if let Some(location) = &glyph_shape.end {
@@ -417,7 +536,11 @@ impl Keyframed<BezPath> {
 
     pub(crate) fn subpaths(&self) -> Vec<Keyframed<BezPath>> {
         // convert each keyframe to subpaths then line 'em up
-        let subpaths: Vec<_> = self.0.iter().map(|s| (s.frame, s.subpaths())).collect();
+        let subpaths: Vec<_> = self
+            .keyframes
+            .iter()
+            .map(|s| (s.frame, s.subpaths()))
+            .collect();
 
         // TODO: should we allow incompatible paths in?
         assert!(
@@ -427,12 +550,12 @@ impl Keyframed<BezPath> {
 
         (0..subpaths[0].1.len())
             .map(|i| {
-                Keyframed(
-                    subpaths
-                        .iter()
-                        .map(|(frame, subpaths)| Keyframe::new(*frame, subpaths[i].clone()))
-                        .collect(),
-                )
+                subpaths
+                    .iter()
+                    .map(|(frame, subpaths)| (*frame, subpaths[i].clone()))
+                    .collect::<Vec<_>>()
+                    .try_into()
+                    .unwrap()
             })
             .collect()
     }
@@ -465,5 +588,66 @@ impl Keyframe<BezPath> {
             paths.push(BezPath::from_vec(elements[last_start..].to_vec()));
         }
         paths
+    }
+}
+
+pub(crate) trait MotionValue {
+    fn reference_value(&self, _i: usize) -> f64;
+    fn scaled(&self, reference: f64, i: usize) -> Self;
+}
+
+impl MotionValue for Keyframe<f64> {
+    fn reference_value(&self, _i: usize) -> f64 {
+        self.value
+    }
+
+    fn scaled(&self, reference: f64, _i: usize) -> Self {
+        let mut scaled = self.clone();
+        scaled.value = reference;
+        scaled
+    }
+}
+
+impl MotionValue for Keyframe<(f64, f64)> {
+    fn reference_value(&self, _i: usize) -> f64 {
+        if self.value.0 == self.value.1 {
+            self.value.0
+        } else {
+            todo!("support 2d values")
+        }
+    }
+
+    fn scaled(&self, reference: f64, _i: usize) -> Self {
+        let mut scaled = self.clone();
+        scaled.value.1 *= reference / scaled.value.0;
+        scaled.value.0 = reference;
+        scaled
+    }
+}
+
+impl MotionValue for Keyframe<Vec2> {
+    fn reference_value(&self, _i: usize) -> f64 {
+        if self.value.x == self.value.y {
+            self.value.x
+        } else {
+            todo!("support 2d values")
+        }
+    }
+
+    fn scaled(&self, reference: f64, i: usize) -> Self {
+        let mut scaled = self.clone();
+        scaled.value.y *= reference / scaled.value.x;
+        scaled.value.x = reference;
+        scaled
+    }
+}
+
+impl MotionValue for Keyframe<BezPath> {
+    fn reference_value(&self, i: usize) -> f64 {
+        i as f64 * 100.0
+    }
+
+    fn scaled(&self, reference: f64, i: usize) -> Self {
+        todo!()
     }
 }

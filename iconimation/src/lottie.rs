@@ -9,19 +9,20 @@ use bodymovin::{
     shapes::{AnyShape, Fill, Group, SubPath, Transform},
     Bodymovin as Lottie,
 };
-use kurbo::{BezPath, PathEl, Point, Shape};
+use kurbo::{Affine, BezPath, CubicBez, PathEl, Point, Shape};
 
 use crate::{
     error::LottieError,
     ir::{self, Element, FromAnimation, Keyframed},
     path_commands,
+    spring::AnimatedValueType,
 };
 
 impl FromAnimation for Lottie {
     type Err = LottieError;
 
     fn from_animation(animation: &crate::ir::Animation) -> Result<Self, Self::Err> {
-        let root_group = to_lottie_group(&animation.root)?;
+        let root_group = to_lottie_group(&animation.root, animation.frame_rate)?;
         Ok(Lottie {
             in_point: 0.0,
             out_point: animation.frames,
@@ -42,16 +43,15 @@ impl FromAnimation for Lottie {
     }
 }
 
-fn to_lottie_group(group: &ir::Group) -> Result<Group, LottieError> {
+fn to_lottie_group(group: &ir::Group, frame_rate: f64) -> Result<Group, LottieError> {
     // de facto standard for Lottie is groups contains shape(s), fill, transform
     let mut items: Vec<_> = group
         .children
         .iter()
         .map(|e| match e {
-            Element::Group(g) => to_lottie_group(g).map(|g| vec![AnyShape::Group(g)]),
-            Element::Shape(s) => {
-                to_lottie_subpath(s).map(|s| s.into_iter().map(AnyShape::Shape).collect())
-            }
+            Element::Group(g) => to_lottie_group(g, frame_rate).map(|g| vec![AnyShape::Group(g)]),
+            Element::Shape(s) => to_lottie_subpath(s, frame_rate)
+                .map(|s| s.into_iter().map(AnyShape::Shape).collect()),
         })
         .collect::<Result<Vec<_>, LottieError>>()?
         .into_iter()
@@ -66,7 +66,7 @@ fn to_lottie_group(group: &ir::Group) -> Result<Group, LottieError> {
         };
     }
     items.push(AnyShape::Fill(fill));
-    items.push(AnyShape::Transform(to_lottie_transform(group)));
+    items.push(AnyShape::Transform(to_lottie_transform(group, frame_rate)));
 
     Ok(Group {
         items,
@@ -74,7 +74,7 @@ fn to_lottie_group(group: &ir::Group) -> Result<Group, LottieError> {
     })
 }
 
-fn to_lottie_transform(group: &ir::Group) -> Transform {
+fn to_lottie_transform(group: &ir::Group, frame_rate: f64) -> Transform {
     let mut transform = Transform::default();
     let (center_x, center_y) = (group.center.x, group.center.y);
     transform.anchor_point.value = Value::Fixed(vec![center_x, center_y]);
@@ -84,11 +84,12 @@ fn to_lottie_transform(group: &ir::Group) -> Transform {
         Value::Animated(
             group
                 .rotate
+                .motion(frame_rate, AnimatedValueType::Rotation)
                 .iter()
-                .map(|keyframe| MultiDimensionalKeyframe {
+                .map(|(ease, keyframe)| MultiDimensionalKeyframe {
                     start_time: keyframe.frame,
                     start_value: Some(vec![keyframe.value]),
-                    bezier: Some(default_ease()),
+                    bezier: Some(to_lottie_ease(ease)),
                     ..Default::default()
                 })
                 .collect(),
@@ -102,11 +103,12 @@ fn to_lottie_transform(group: &ir::Group) -> Transform {
         Value::Animated(
             group
                 .scale
+                .motion(frame_rate, AnimatedValueType::Scale)
                 .iter()
-                .map(|keyframe| MultiDimensionalKeyframe {
+                .map(|(ease, keyframe)| MultiDimensionalKeyframe {
                     start_time: keyframe.frame,
                     start_value: Some(vec![keyframe.value.0, keyframe.value.1]),
-                    bezier: Some(default_ease()),
+                    bezier: Some(to_lottie_ease(ease)),
                     ..Default::default()
                 })
                 .collect(),
@@ -121,14 +123,15 @@ fn to_lottie_transform(group: &ir::Group) -> Transform {
         Value::Animated(
             group
                 .translate
+                .motion(frame_rate, AnimatedValueType::Position)
                 .iter()
-                .map(|keyframe| MultiDimensionalKeyframe {
+                .map(|(ease, keyframe)| MultiDimensionalKeyframe {
                     start_time: keyframe.frame,
                     start_value: Some(vec![
                         center_x + keyframe.value.x,
                         center_y + keyframe.value.y,
                     ]),
-                    bezier: Some(default_ease()),
+                    bezier: Some(to_lottie_ease(ease)),
                     ..Default::default()
                 })
                 .collect(),
@@ -141,21 +144,32 @@ fn to_lottie_transform(group: &ir::Group) -> Transform {
     transform
 }
 
-fn default_ease() -> BezierEase {
-    // If https://lottiefiles.github.io/lottie-docs/playground/json_editor/ is to be believed
-    // the bezier ease is usually required since we rarely want to "hold"
+fn to_lottie_ease(bez: CubicBez) -> BezierEase {
+    let start = Point { x: 0.0, y: 0.0 };
+    let end = Point { x: 1.0, y: 1.0 };
+    let transform = match bez {
+        _ if bez.p0 == start && bez.p3 == end => Affine::IDENTITY,
+        _ => Affine::translate(-bez.p0.to_vec2())
+            // scale to match
+            .then_scale_non_uniform(end.x / (bez.p3.x - bez.p0.x), end.y / (bez.p3.y - bez.p0.y)),
+    };
+    let ease = transform * bez;
     BezierEase::_2D(Bezier2d {
-        // the control point incoming to destination
-        in_value: ControlPoint2d { x: 0.6, y: 1.0 },
-        // the control point outgoing from origin
-        out_value: ControlPoint2d { x: 0.4, y: 0.0 },
+        // the control point coming "in" to end
+        in_value: to_lottie_controlpoint(ease.p2),
+        // the control point coming "out" from start
+        out_value: to_lottie_controlpoint(ease.p1),
     })
 }
 
-fn to_lottie_subpath(path: &Keyframed<BezPath>) -> Result<Vec<SubPath>, LottieError> {
-    // https://lottiefiles.github.io/lottie-docs/playground/json_editor/ doesn't play if there is no ease
-    let ease = default_ease();
+fn to_lottie_controlpoint(p: Point) -> ControlPoint2d {
+    ControlPoint2d { x: p.x, y: p.y }
+}
 
+fn to_lottie_subpath(
+    path: &Keyframed<BezPath>,
+    frame_rate: f64,
+) -> Result<Vec<SubPath>, LottieError> {
     // In a mildly confusing turn of events an *animated* subpath has keyframes with
     // vectors of paths while a static one just gets a single continuous path so what we
     // produce varies based on whether we're animated
@@ -186,18 +200,12 @@ fn to_lottie_subpath(path: &Keyframed<BezPath>) -> Result<Vec<SubPath>, LottieEr
         panic!("TODO: support > 2 path keyframes");
     }
 
-    for ir_keyframe in path.iter() {
+    for (ease, keyframe) in path.motion(frame_rate, AnimatedValueType::Position).iter() {
         keyframes.push(ShapeKeyframe {
-            start_time: ir_keyframe.frame,
-            start_value: Some(
-                ir_keyframe
-                    .subpaths()
-                    .iter()
-                    .map(create_shapevalue)
-                    .collect(),
-            ),
-            // no ease, no render
-            bezier: Some(ease.clone()),
+            start_time: keyframe.frame,
+            start_value: Some(keyframe.subpaths().iter().map(create_shapevalue).collect()),
+            // https://lottiefiles.github.io/lottie-docs/playground/json_editor/ doesn't play if there is no ease
+            bezier: Some(to_lottie_ease(ease)),
             ..Default::default()
         })
     }
